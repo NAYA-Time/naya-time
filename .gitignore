@@ -1,5 +1,8 @@
-node_modules/
-data/
+node_modules
+.next
 .env
-*.log
-.DS_Store
+.storage
+*.tsbuildinfo
+next-env.d.ts
+deploy/.env
+scripts/_*

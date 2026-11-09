@@ -1,0 +1,104 @@
+import { prisma } from "@/lib/db";
+import { requireAdmin } from "@/lib/admin-auth";
+import { cancelAbsence, createAbsence } from "@/lib/admin-actions-absences";
+import { currentDeptFilter, matchesFilter } from "@/lib/dept";
+import { dateDe } from "@/lib/labels";
+import { berlinDate, fmtMinutes } from "@/lib/time";
+import { ActionForm, Field } from "./ActionForm";
+import { Section, Select } from "./Select";
+
+const TYPE_LABEL: Record<string, string> = { VACATION: "Urlaub", SICK: "Krank", SICK_CHILD: "Kind krank", SPECIAL_LEAVE: "Sonderurlaub", UNPAID: "Unbezahlt", TIME_OFF_IN_LIEU: "Freizeitausgleich" };
+
+export async function AbsencePage({ mode }: { mode: "sick" | "vacation" }) {
+  const admin = await requireAdmin("employees.view");
+  const filter = await currentDeptFilter();
+  const types = mode === "sick" ? ["SICK", "SICK_CHILD"] : ["VACATION", "SPECIAL_LEAVE", "UNPAID", "TIME_OFF_IN_LIEU"];
+  const year = Number(berlinDate(new Date()).slice(0, 4));
+  const [emps, absences] = await Promise.all([
+    prisma.employee.findMany({ where: { active: true }, include: { primaryDept: { include: { parent: true } }, contracts: { orderBy: { validFrom: "desc" }, take: 1 }, vacationBalances: { where: { year } } }, orderBy: { lastName: "asc" } }),
+    prisma.absence.findMany({
+      where: { type: { in: types as never }, endDate: { gte: dbYearStart(year - 1) } },
+      include: { employee: { include: { primaryDept: { include: { parent: true } } } }, days: true, sickLeave: true }, orderBy: { startDate: "desc" },
+    }),
+  ]);
+  const visible = emps.filter((e) => matchesFilter(filter, e.primaryDept));
+  const rows = absences.filter((a) => matchesFilter(filter, a.employee.primaryDept));
+  const canManage = admin.permissions.has("absences.manage");
+
+  // Urlaubskonto je Mitarbeiter für das laufende Jahr
+  const vacation = mode === "vacation" ? await vacationOverview(visible, year) : [];
+
+  return (
+    <div className="grid max-w-5xl gap-5">
+      <h1 className="text-3xl font-semibold">{mode === "sick" ? "Krankheit" : "Urlaub"}</h1>
+      {mode === "sick" && <p className="text-mute">Es werden keine Diagnosen gespeichert. Angerechnet wird der zum Zeitpunkt der Eintragung geplante Dienst; spätere Dienstplanänderungen ändern die Anrechnung nicht.</p>}
+      {canManage && (
+        <Section title={mode === "sick" ? "Krankmeldung eintragen" : "Abwesenheit eintragen"}>
+          <ActionForm action={createAbsence} submit="Eintragen">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Select label="Mitarbeiter" name="employeeId" options={visible.map((e) => [e.id, `${e.lastName}, ${e.firstName}`])} required />
+              <Select label="Art" name="type" options={types.map((t) => [t, TYPE_LABEL[t]])} />
+              <Field label={mode === "sick" ? "Erster Krankheitstag" : "Von"} name="from" type="date" defaultValue={berlinDate(new Date())} required />
+              <Field label={mode === "sick" ? "Letzter Krankheitstag" : "Bis"} name="to" type="date" defaultValue={berlinDate(new Date())} />
+              {mode === "sick" && <Select label="Arbeitsunfähigkeitsbescheinigung" name="certificate" options={[["UNKNOWN", "Noch offen"], ["EAU_RETRIEVED", "eAU abgerufen"], ["SUBMITTED", "Vorgelegt"], ["NOT_REQUIRED", "Nicht erforderlich"]]} />}
+              <Field label="Bemerkung (keine Diagnose)" name="note" />
+            </div>
+          </ActionForm>
+        </Section>
+      )}
+
+      {mode === "vacation" && (
+        <Section title={`Urlaubskonten ${year}`} hint="Anspruch aus dem aktuellen Vertrag, bei Eintritt im laufenden Jahr anteilig (je voller Monat 1/12, aufgerundet auf halbe Tage).">
+          <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-left text-sm tabular">
+            <thead className="text-xs tracking-wider text-mute"><tr><th className="py-2">MITARBEITER</th><th>ANSPRUCH</th><th>VORJAHR</th><th>GENOMMEN</th><th>GEPLANT</th><th>RESTURLAUB</th></tr></thead>
+            <tbody>{vacation.map((v) => (
+              <tr key={v.id} className="border-t border-line"><td className="py-2">{v.name}</td><td>{v.entitlement}</td><td>{v.carry}</td><td>{v.taken}</td><td>{v.planned}</td><td className={`font-bold ${v.rest < 0 ? "text-bad" : ""}`}>{v.rest}</td></tr>
+            ))}</tbody>
+          </table></div>
+        </Section>
+      )}
+
+      <Section title="Einträge">
+        {rows.length === 0 ? <p className="text-mute">Keine Einträge.</p> : (
+          <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-left text-sm tabular">
+            <thead className="text-xs tracking-wider text-mute"><tr><th className="py-2">MITARBEITER</th><th>ART</th><th>ZEITRAUM</th><th>ANGERECHNET</th>{mode === "vacation" && <th>TAGE</th>}<th>STATUS</th><th /></tr></thead>
+            <tbody>{rows.map((a) => {
+              const credited = a.days.reduce((x, d) => x + d.creditedMinutes, 0);
+              return (
+                <tr key={a.id} className={`border-t border-line ${a.status === "CANCELLED" ? "opacity-40 line-through" : ""}`}>
+                  <td className="py-2">{a.employee.firstName} {a.employee.lastName}</td><td>{TYPE_LABEL[a.type]}</td>
+                  <td>{dateDe(a.startDate)}{+a.endDate !== +a.startDate ? ` – ${dateDe(a.endDate)}` : ""}</td><td>{fmtMinutes(credited)} Std.</td>
+                  {mode === "vacation" && <td>{a.days.reduce((x, d) => x + d.vacationDayValue, 0) / 2}</td>}
+                  <td>{a.status === "CANCELLED" ? "storniert" : a.status === "PLANNED" ? "geplant" : "bestätigt"}</td>
+                  <td className="text-right">{canManage && a.status !== "CANCELLED" && <ActionForm action={cancelAbsence} submit="Stornieren" className="inline-flex"><input type="hidden" name="id" value={a.id} /></ActionForm>}</td>
+                </tr>
+              );
+            })}</tbody>
+          </table></div>
+        )}
+      </Section>
+    </div>
+  );
+}
+
+function dbYearStart(y: number) { return new Date(`${y}-01-01T00:00:00.000Z`); }
+
+async function vacationOverview(emps: { id: string; firstName: string; lastName: string; entryDate: Date; contracts: { vacationDaysPerYear: number }[]; vacationBalances: { carryOverHalfDays: number; manualAdjustHalfDays: number }[] }[], year: number) {
+  const days = await prisma.absenceDay.findMany({
+    where: { vacationDayValue: { gt: 0 }, date: { gte: dbYearStart(year), lt: dbYearStart(year + 1) }, absence: { status: { not: "CANCELLED" }, employeeId: { in: emps.map((e) => e.id) } } },
+    include: { absence: { select: { employeeId: true } } },
+  });
+  const today = new Date(berlinDate(new Date()) + "T00:00:00Z");
+  return emps.map((e) => {
+    const full = e.contracts[0]?.vacationDaysPerYear ?? 0;
+    const entryYear = e.entryDate.getUTCFullYear();
+    const months = entryYear < year ? 12 : entryYear > year ? 0 : 12 - e.entryDate.getUTCMonth() - (e.entryDate.getUTCDate() > 1 ? 1 : 0);
+    const entitlement = Math.ceil(((full * months) / 12) * 2) / 2;
+    const bal = e.vacationBalances[0];
+    const carry = (bal?.carryOverHalfDays ?? 0) / 2 + (bal?.manualAdjustHalfDays ?? 0) / 2;
+    const mine = days.filter((d) => d.absence.employeeId === e.id);
+    const taken = mine.filter((d) => d.date <= today).reduce((x, d) => x + d.vacationDayValue, 0) / 2;
+    const planned = mine.filter((d) => d.date > today).reduce((x, d) => x + d.vacationDayValue, 0) / 2;
+    return { id: e.id, name: `${e.lastName}, ${e.firstName}`, entitlement, carry, taken, planned, rest: entitlement + carry - taken - planned };
+  });
+}

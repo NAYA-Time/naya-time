@@ -1,0 +1,10 @@
+{
+	# Die DNS-Zone von naya-restaurant.de erlaubt per CAA-Eintrag nur Let's Encrypt.
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
+	email zeit@naya-restaurant.de
+}
+
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy app:3000
+}
