@@ -29,32 +29,18 @@ Node.js 22 mit Express, SQLite (eingebaut in Node) und ExcelJS. Davor läuft Cad
 
 ## Installation auf dem Hetzner-Server
 
-Voraussetzung ist ein Hetzner-Cloud-Server mit Ubuntu 24.04. Der kleinste Typ reicht. Für die Sicherung im Hetzner-Menü **Backups** aktivieren.
+Voraussetzung ist ein Hetzner-Cloud-Server mit Ubuntu 26.04. Der kleinste Typ reicht. Für die Sicherung im Hetzner-Menü **Backups** aktivieren.
+
+Als root auf dem Server einen einzigen Befehl ausführen:
 
 ```bash
-# 1. Docker installieren
-curl -fsSL https://get.docker.com | sh
-
-# 2. Code holen
-git clone https://github.com/NAYA-Time/naya-time.git /opt/naya-time
-cd /opt/naya-time
-
-# 3. Einstellungen anlegen
-cp .env.example .env
-sed -i "s/^SESSION_SECRET=.*/SESSION_SECRET=$(openssl rand -hex 32)/" .env
-sed -i "s/^TERMINAL_SCHLUESSEL=.*/TERMINAL_SCHLUESSEL=$(openssl rand -hex 24)/" .env
-nano .env          # ADMIN_PASSWORT eintragen
-
-# 4. Datenordner anlegen (die App läuft im Container als Benutzer 1000)
-mkdir -p data && chown 1000:1000 data
-
-# 5. Starten
-docker compose up -d --build
+curl -fsSL https://raw.githubusercontent.com/NAYA-Time/naya-time/main/install.sh | bash
 ```
+
+Das Skript installiert bei Bedarf Docker, holt den Code nach `/opt/naya-time` und fragt beim ersten Mal nach dem Admin-Passwort. Die übrigen Geheimnisse erzeugt es selbst in `.env`. Danach startet es die App. Für ein Update führst du denselben Befehl einfach noch einmal aus.
 
 Danach im DNS bei honds.de einen **A-Record** anlegen: Name `zeit`, Ziel ist die IPv4-Adresse des Servers. Sobald der Eintrag aktiv ist, holt Caddy das Zertifikat selbst.
 
-**Update auf eine neue Version:** `cd /opt/naya-time && git pull && docker compose up -d --build`
 
 ## iPad einrichten
 
