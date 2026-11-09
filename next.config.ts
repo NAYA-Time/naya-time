@@ -24,6 +24,7 @@ const securityHeaders = [
 
 const config: NextConfig = {
   poweredByHeader: false,
+  experimental: { serverActions: { bodySizeLimit: "6mb" } }, // Dienstplan-Foto
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

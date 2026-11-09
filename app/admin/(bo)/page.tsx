@@ -1,3 +1,4 @@
+import { PhotoButton } from "@/components/PhotoViewer";
 import { requireAdmin } from "@/lib/admin-auth";
 import { todayOverview, type LiveStatus } from "@/lib/dashboard";
 import { currentDeptFilter } from "@/lib/dept";
@@ -20,6 +21,7 @@ const SEV = { INFO: "border-line", WARNING: "border-warn/60", CRITICAL: "border-
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const admin = await requireAdmin("dashboard.view");
+  const canPhotos = admin.permissions.has("photos.view");
   const sp = await searchParams;
   const filter = await currentDeptFilter();
   const { stats, rows, findings } = await todayOverview(filter);
@@ -55,7 +57,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.employeeId} className="border-t border-line">
-                    <td className="px-4 py-3 font-medium">{r.name}</td>
+                    <td className="px-4 py-3 font-medium"><span className="flex flex-wrap items-center gap-2">{r.name}{canPhotos && <PhotoButton name={r.name} date="heute" photos={r.photos} />}</span></td>
                     <td className="px-4 py-3 text-mute">{r.dept}</td>
                     <td className="px-4 py-3">{r.planned ?? "–"}</td>
                     <td className="px-4 py-3">{r.clockIn ?? "–"}{r.lateMinutes > 5 && <span className="ml-2 text-sm text-warn">+{r.lateMinutes} Min.</span>}{r.photoMissing && <span className="ml-2 text-sm text-warn">Foto fehlt</span>}</td>

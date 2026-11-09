@@ -55,7 +55,7 @@ export async function createAbsence(_: FormState, fd: FormData): Promise<FormSta
   revalidatePath("/admin/urlaub");
   const credited = rows.reduce((x, r) => x + r.creditedMinutes, 0);
   const vac = rows.reduce((x, r) => x + r.vacationDayValue, 0) / 2;
-  return { ok: `Eingetragen: ${rows.length} Kalendertage, angerechnet ${Math.floor(credited / 60)}:${String(credited % 60).padStart(2, "0")} Std.${type === "VACATION" ? `, ${vac} Urlaubstage` : ""}.` };
+  return { ok: `Eingetragen: ${rows.length} ${rows.length === 1 ? "Kalendertag" : "Kalendertage"}, angerechnet ${Math.floor(credited / 60)}:${String(credited % 60).padStart(2, "0")} Std.${type === "VACATION" ? ` (${vac} ${vac === 1 ? "Urlaubstag" : "Urlaubstage"})` : ""}` };
 }
 
 export async function cancelAbsence(_: FormState, fd: FormData): Promise<FormState> {

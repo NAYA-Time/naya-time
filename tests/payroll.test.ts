@@ -41,3 +41,23 @@ describe("Aushilfenabrechnung mit Stichtag", () => {
     expect([paymentStatus(10000, 0, true), paymentStatus(10000, 4000, true), paymentStatus(10000, 10000, true)]).toEqual(["SETTLED", "PARTIALLY_PAID", "PAID"]);
   });
 });
+
+describe("Grenzen für Aushilfen (Hinweise)", () => {
+  it("Minijob: Hinweis erst über der Monatsgrenze 2026 (603 €)", async () => {
+    const { employmentLimitHints } = await import("../lib/calc/payroll");
+    const day = (d: string, cents: number) => ({ workDate: d, kind: "WORK" as const, cents });
+    expect(employmentLimitHints("MINIJOB", "2026-10-31", [day("2026-10-02", 30000), day("2026-10-03", 30300)])).toEqual([]);
+    const h = employmentLimitHints("MINIJOB", "2026-10-31", [day("2026-09-30", 50000), day("2026-10-02", 30000), day("2026-10-03", 30301)]);
+    expect(h).toHaveLength(1);
+    expect(h[0]).toContain("603,01 € im Monat 10/2026");
+    expect(h[0]).toContain("603,00 €");
+  });
+  it("Kurzfristig: Vorwarnung ab 60, Hinweis über 70 Arbeitstagen im Jahr", async () => {
+    const { employmentLimitHints } = await import("../lib/calc/payroll");
+    const days = (n: number) => Array.from({ length: n }, (_, i) => ({ workDate: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10), kind: "WORK" as const, cents: 1000 }));
+    expect(employmentLimitHints("KURZFRISTIG", "2026-12-31", days(59))).toEqual([]);
+    expect(employmentLimitHints("KURZFRISTIG", "2026-12-31", days(60))[0]).toContain("schon 60 von höchstens 70");
+    expect(employmentLimitHints("KURZFRISTIG", "2026-12-31", days(71))[0]).toContain("mehr als 70");
+    expect(employmentLimitHints("FESTANGESTELLT", "2026-12-31", days(200))).toEqual([]);
+  });
+});

@@ -6,3 +6,5 @@ node_modules
 next-env.d.ts
 deploy/.env
 scripts/_*
+.env.probe
+.probe-*

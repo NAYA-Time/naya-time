@@ -20,6 +20,34 @@ export interface PayEmployee {
 
 export const amount = (minutes: number, centsPerHour: number) => Math.round((minutes * centsPerHour) / 60);
 const de = (d: string) => `${d.slice(8)}.${d.slice(5, 7)}.`;
+const euro = (c: number) => (c / 100).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+
+/** Minijob-Verdienstgrenze je Monat (an den Mindestlohn gekoppelt): 2025 556 €, 2026 603 €, 2027 633 € */
+export function minijobLimitCents(year: number): number {
+  if (year >= 2027) return 63300;
+  if (year === 2026) return 60300;
+  return 55600;
+}
+
+/**
+ * Warnhinweise für die Aushilfenabrechnung (blockieren nichts):
+ * Minijob – Verdienst im Monat des Stichtags über der Grenze; kurzfristig – mehr als 70 (ab 60 Vorwarnung) Arbeitstage im Kalenderjahr.
+ */
+export function employmentLimitHints(type: string, cutoff: string, items: { workDate: string; kind: "WORK" | "PAID_ABSENCE"; cents: number }[]): string[] {
+  const hints: string[] = [];
+  if (type === "MINIJOB") {
+    const month = cutoff.slice(0, 7);
+    const sum = items.filter((i) => i.workDate.startsWith(month)).reduce((a, i) => a + i.cents, 0);
+    const limit = minijobLimitCents(Number(cutoff.slice(0, 4)));
+    if (sum > limit) hints.push(`Minijob-Grenze überschritten: ${euro(sum)} im Monat ${month.slice(5)}/${month.slice(0, 4)} (Grenze ${euro(limit)}) – bitte mit dem Lohnbüro klären`);
+  }
+  if (type === "KURZFRISTIG") {
+    const days = new Set(items.filter((i) => i.kind === "WORK" && i.workDate.startsWith(cutoff.slice(0, 4)) && i.workDate <= cutoff).map((i) => i.workDate)).size;
+    if (days > 70) hints.push(`Kurzfristige Beschäftigung: ${days} Arbeitstage in ${cutoff.slice(0, 4)} – mehr als 70 erlaubt, bitte mit dem Lohnbüro klären`);
+    else if (days >= 60) hints.push(`Kurzfristige Beschäftigung: schon ${days} von höchstens 70 Arbeitstagen in ${cutoff.slice(0, 4)}`);
+  }
+  return hints;
+}
 
 export function preparePayroll(cutoff: string, sources: PaySource[], settled: Map<string, number>, wages: Map<string, Wage[]>): PayEmployee[] {
   const cutoffMonthStart = cutoff.slice(0, 7) + "-01";

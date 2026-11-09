@@ -2,7 +2,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "./db";
 import { audit } from "./audit";
-import { paymentStatus, preparePayroll, type PayEmployee, type PaySource, type Wage } from "./calc/payroll";
+import { amount, employmentLimitHints, paymentStatus, preparePayroll, type PayEmployee, type PaySource, type Wage } from "./calc/payroll";
 import { dbDate } from "./time";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -28,7 +28,18 @@ export async function loadOpenPayroll(db: Db, cutoff: string): Promise<PayEmploy
     ...absDays.filter((a) => hourlyAt.get(a.absence.employeeId)!(ymd(a.date))).map((a) => ({ kind: "PAID_ABSENCE" as const, sourceId: a.id, employeeId: a.absence.employeeId, workDate: ymd(a.date), minutes: a.creditedMinutes })),
   ];
   const wages = new Map<string, Wage[]>(emps.map((e) => [e.id, e.wages.map((w) => ({ validFrom: ymd(w.validFrom), validTo: w.validTo ? ymd(w.validTo) : null, centsPerHour: w.centsPerHour }))]));
-  return preparePayroll(cutoff, sources, settled, wages);
+  const result = preparePayroll(cutoff, sources, settled, wages);
+  // Hinweise zu Minijob-Verdienstgrenze und 70-Tage-Grenze (kurzfristige Beschäftigung) – nur Warnung, nichts wird blockiert
+  const rate = (id: string, d: string) => wages.get(id)?.find((w) => w.validFrom <= d && (!w.validTo || w.validTo >= d))?.centsPerHour ?? 0;
+  for (const e of emps) {
+    const own = sources.filter((x) => x.employeeId === e.id && !x.open);
+    const hints = employmentLimitHints(e.employmentType, cutoff, own.map((x) => ({ workDate: x.workDate, kind: x.kind, cents: amount(x.minutes, rate(e.id, x.workDate)) })));
+    if (!hints.length) continue;
+    let row = result.find((r) => r.employeeId === e.id);
+    if (!row) { row = { employeeId: e.id, items: [], minutes: 0, grossCents: 0, carryMinutes: 0, carryCents: 0, blockers: [], hints: [] }; result.push(row); }
+    row.hints.push(...hints);
+  }
+  return result;
 }
 
 export async function createPayrollPeriod(adminId: string, cutoff: string, label: string): Promise<{ ok?: string; error?: string; id?: string }> {

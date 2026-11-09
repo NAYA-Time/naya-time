@@ -5,11 +5,12 @@ import { cachedEmployees, flushQueue, hasPublicKey, listQueue, queueStamp, remem
 
 // ───────────────────────── Typen ─────────────────────────
 type Action = "CLOCK_IN" | "CLOCK_OUT" | "BREAK_START" | "BREAK_END";
-type Intent = "IN" | "OUT" | "BREAK";
+type Intent = "IN" | "OUT" | "BREAK" | "PLAN";
 type Emp = { id: string; name: string; dept: string; deptName: string; needsSetup: boolean };
 type Greeting = {
   ticket: string; firstName: string; today: string; serverTime: string; state: "OUT" | "IN" | "BREAK";
   since: string | null; shift: { start: string; end: string | null } | null; actions: Action[]; askBreak: boolean;
+  plan?: { title: string; range: string; published: boolean; days: { label: string; today: boolean; shifts: string[]; absence: string | null }[] }[];
 };
 type Screen =
   | { k: "loading" }
@@ -85,6 +86,31 @@ function Big({ children, onClick, tone = "gold", disabled }: { children: React.R
       className={`w-full min-h-24 rounded-2xl px-6 text-2xl font-semibold tracking-[0.12em] transition-transform active:scale-[0.985] disabled:opacity-40 ${tones[tone]}`}>
       {children}
     </button>
+  );
+}
+
+function MyPlan({ g }: { g: Greeting }) {
+  return (
+    <div className="mx-auto grid w-full max-w-4xl flex-1 content-start gap-6 overflow-y-auto py-4">
+      <h2 className="font-display text-5xl">Hallo {g.firstName}, deine Dienste</h2>
+      {(g.plan ?? []).map((w) => (
+        <section key={w.title} className="rounded-3xl border border-line bg-coal p-5">
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-2xl font-semibold">{w.title} <span className="text-mute tabular">{w.range}</span></h3>
+            {!w.published && <span className="text-lg text-warn">noch nicht veröffentlicht – kann sich ändern</span>}
+          </div>
+          <ul className="grid gap-1">
+            {w.days.map((d) => (
+              <li key={d.label} className={`flex items-center justify-between rounded-xl px-4 py-2.5 text-2xl ${d.today ? "bg-gold/15 text-gold" : ""}`}>
+                <span className="tabular">{d.label}</span>
+                <span className="tabular">{d.shifts.length ? d.shifts.join(", ") : d.absence ?? <span className="text-mute">frei</span>}{d.shifts.length > 0 && d.absence ? ` · ${d.absence}` : ""}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      <p className="text-lg text-mute">Nur du siehst hier deinen Plan. Bei Fragen zum Dienstplan bitte bei der Leitung melden.</p>
+    </div>
   );
 }
 
@@ -280,6 +306,7 @@ export default function Terminal() {
       setOnline(true);
       afterAuth(intent, g);
     } catch (e) {
+      if (!(e as { status?: number }).status && intent === "PLAN") { auth.current = null; return setScreen({ k: "error", message: "Keine Verbindung zum Server. Der Dienstplan kann gerade nicht angezeigt werden." }); }
       if (!(e as { status?: number }).status && hasPublicKey()) { idempotency.current = crypto.randomUUID(); return setScreen({ k: "offline", intent, emp, number }); }
       auth.current = null;
       setScreen({ k: "pin", intent, emp, number, error: (e as Error).message });
@@ -363,6 +390,7 @@ export default function Terminal() {
               <Big tone="dark" onClick={() => setScreen({ k: "pick", intent: "OUT" })}>JETZT AUSSTEMPELN</Big>
               <Big tone="dark" onClick={() => setScreen({ k: "pick", intent: "BREAK" })}>PAUSE</Big>
             </div>
+            <button onClick={() => setScreen({ k: "pick", intent: "PLAN" })} className="min-h-16 rounded-2xl border border-line bg-ink/60 text-xl tracking-wide text-paper active:bg-slate">MEIN DIENSTPLAN</button>
           </div>
         </main>
       );
@@ -370,7 +398,7 @@ export default function Terminal() {
     case "pick": {
       const list = emps.filter((e) => filter === "ALL" || e.dept === filter);
       return (
-        <Shell onBack={home} title={screen.intent === "IN" ? "Einstempeln" : screen.intent === "OUT" ? "Ausstempeln" : "Pause"}>
+        <Shell onBack={home} title={screen.intent === "IN" ? "Einstempeln" : screen.intent === "OUT" ? "Ausstempeln" : screen.intent === "PLAN" ? "Mein Dienstplan" : "Pause"}>
           <div className="my-4 flex items-center justify-between gap-4">
             <h2 className="text-3xl">Wer bist du?</h2>
             <div className="flex gap-2">
@@ -441,6 +469,7 @@ export default function Terminal() {
 
     case "confirm": {
       const g = screen.g;
+      if (screen.intent === "PLAN") return <Shell onBack={home} title="Mein Dienstplan"><MyPlan g={g} /></Shell>;
       const wanted: Action[] = screen.intent === "IN" ? ["CLOCK_IN"] : screen.intent === "OUT" ? ["CLOCK_OUT"] : ["BREAK_START", "BREAK_END"];
       const primary = g.actions.filter((a) => wanted.includes(a));
       const others = g.actions.filter((a) => !wanted.includes(a));

@@ -2,7 +2,7 @@ import { prisma } from "./db";
 import { signTicket } from "./crypto";
 import { employeeState, findShift, markStaleSessions } from "./stamp";
 import { requiredBreakForPresence } from "./calc/session";
-import { berlinLongDate, berlinTime, minutesBetween } from "./time";
+import { berlinDate, berlinLongDate, berlinTime, dbDate, minutesBetween } from "./time";
 
 export const TICKET_TTL = 120; // Sekunden – danach muss der PIN erneut eingegeben werden
 
@@ -32,5 +32,42 @@ export async function terminalGreeting(employeeId: string, terminalId: string) {
     shift: shift?.startAt ? { start: berlinTime(shift.startAt), end: shift.endAt ? berlinTime(shift.endAt) : null } : null,
     actions,
     askBreak,
+    plan: await myPlan(employeeId, now),
   };
+}
+
+const addDays = (ymd: string, n: number) => new Date(Date.parse(ymd + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+const WD = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+const ABS: Record<string, string> = { VACATION: "Urlaub", SICK: "Krank", SICK_CHILD: "Kind krank", SPECIAL_LEAVE: "Sonderurlaub", UNPAID: "Unbezahlt frei", TIME_OFF_IN_LIEU: "Freizeitausgleich" };
+export type PlanWeek = { title: string; range: string; published: boolean; days: { label: string; today: boolean; shifts: string[]; absence: string | null }[] };
+
+/** "Mein Dienstplan": nur die eigenen Dienste und Abwesenheiten, diese und nächste Woche. Keine Kollegen, kein Stundenkonto. */
+export async function myPlan(employeeId: string, now: Date): Promise<PlanWeek[]> {
+  const today = berlinDate(now);
+  const monday = addDays(today, -((new Date(today + "T12:00:00Z").getUTCDay() + 6) % 7));
+  const end = addDays(monday, 13);
+  const [shifts, absences, scheds] = await Promise.all([
+    prisma.scheduledShift.findMany({ where: { employeeId, deletedAt: null, kind: "WORK", workDate: { gte: dbDate(monday), lte: dbDate(end) } }, orderBy: { startAt: "asc" } }),
+    prisma.absence.findMany({ where: { employeeId, status: { not: "CANCELLED" }, startDate: { lte: dbDate(end) }, endDate: { gte: dbDate(monday) } } }),
+    prisma.workSchedule.findMany({ where: { departmentId: null, periodStart: { in: [dbDate(monday), dbDate(addDays(monday, 7))] } } }),
+  ]);
+  const de = (d: string) => `${d.slice(8)}.${d.slice(5, 7)}.`;
+  return [0, 7].map((off, w) => {
+    const m = addDays(monday, off);
+    return {
+      title: w === 0 ? "Diese Woche" : "Nächste Woche",
+      range: `${de(m)} – ${de(addDays(m, 6))}`,
+      published: scheds.some((x) => berlinDate(x.periodStart) === m && x.status === "PUBLISHED"),
+      days: WD.map((wd, i) => {
+        const d = addDays(m, i);
+        const abs = absences.find((a) => berlinDate(a.startDate) <= d && berlinDate(a.endDate) >= d);
+        return {
+          label: `${wd} ${de(d)}`,
+          today: d === today,
+          shifts: shifts.filter((s) => berlinDate(s.workDate) === d && s.startAt).map((s) => `${berlinTime(s.startAt!)}–${s.endAt ? berlinTime(s.endAt) : "?"}`),
+          absence: abs ? ABS[abs.type] ?? "Abwesend" : null,
+        };
+      }),
+    };
+  });
 }

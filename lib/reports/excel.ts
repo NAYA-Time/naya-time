@@ -1,3 +1,4 @@
+import { amount } from "../calc/payroll";
 // Excel-Berichte (Woche, Monat, Aushilfenlauf). Zeiten als Excel-Zeitwerte ([h]:mm), damit man in Excel weiterrechnen kann.
 import ExcelJS from "exceljs";
 import type { PrismaClient } from "@prisma/client";
@@ -8,7 +9,7 @@ import { berlinDate, berlinTime, dbDate } from "../time";
 
 const DEPT_LABEL: Record<DeptFilter, string> = { ALL: "Alle", KUECHE: "Küche", SERVICE: "Service" };
 const ABS_LABEL: Record<string, string> = { VACATION: "Urlaub", SICK: "Krank", SICK_CHILD: "Kind krank", SPECIAL_LEAVE: "Sonderurlaub", UNPAID: "Unbezahlt", TIME_OFF_IN_LIEU: "Freizeitausgleich" };
-const FINDING_LABEL: Record<string, string> = { LATE: "Verspätung", NO_SHOW: "Nicht erschienen", MISSING_CLOCK_OUT: "Ausstempeln fehlt", BREAK_MISSING: "Pause fehlt", MAX_HOURS: "Höchstarbeitszeit", REST_PERIOD: "Ruhezeit", PHOTO_MISSING: "Foto fehlt", OVERRUN: "Länger als geplant", EARLY: "Früher gekommen" };
+const FINDING_LABEL: Record<string, string> = { LATE: "Verspätung", LATE_START: "Verspätung", LATE_END: "Länger als geplant", EARLY_START: "Früher gekommen", NO_SHOW: "Nicht erschienen", OFFLINE_UNTRUSTED: "Offline-Zeit unsicher", OFFLINE_REJECTED: "Offline-Buchung abgelehnt", MISSING_CLOCK_OUT: "Ausstempeln fehlt", BREAK_MISSING: "Pause fehlt", MAX_HOURS: "Höchstarbeitszeit", REST_PERIOD: "Ruhezeit", PHOTO_MISSING: "Foto fehlt", OVERRUN: "Länger als geplant", EARLY: "Früher gekommen" };
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const de = (s: string) => `${s.slice(8)}.${s.slice(5, 7)}.${s.slice(0, 4)}`;
 const t = (min: number) => min / 1440; // Minuten → Excel-Tagesbruchteil
@@ -137,7 +138,8 @@ export async function monthlyReport(db: PrismaClient, month: string, filter: Dep
       const rate = (day: string) => wages.find((w) => ymd(w.validFrom) <= day && (!w.validTo || ymd(w.validTo) >= day))?.centsPerHour ?? 0;
       const ss = d.sessions.filter((s) => s.employeeId === e.id && s.status === "CLOSED");
       const ab = d.absDays.filter((a) => a.absence.employeeId === e.id && ["SICK", "VACATION", "SPECIAL_LEAVE"].includes(a.absence.type));
-      const gross = Math.round([...ss.map((s) => (s.payableMinutes * rate(ymd(s.workDate))) / 60), ...ab.map((a) => (a.creditedMinutes * rate(ymd(a.date))) / 60)].reduce((x, y) => x + y, 0));
+      // je Tag auf Cent gerundet – genau wie die Aushilfenabrechnung (lib/calc/payroll.ts), damit beide Beträge übereinstimmen
+      const gross = [...ss.map((s) => amount(s.payableMinutes, rate(ymd(s.workDate)))), ...ab.map((a) => amount(a.creditedMinutes, rate(ymd(a.date))))].reduce((x, y) => x + y, 0);
       const open = d.sessions.filter((s) => s.employeeId === e.id && s.status !== "CLOSED").length;
       aus.addRow({ name: `${e.lastName}, ${e.firstName}`, dept: e.primaryDept.name, hours: t(ss.reduce((a, s) => a + s.payableMinutes, 0)), abs: t(ab.reduce((a, x) => a + x.creditedMinutes, 0)), gross: gross / 100, note: open ? `${open} Schicht(en) ohne Ausstempeln nicht enthalten` : "Ausgezahlt wird über die Aushilfenabrechnung (Stichtag)" });
     }

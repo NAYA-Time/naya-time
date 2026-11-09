@@ -1,0 +1,433 @@
+{
+ "weekStart": "2026-11-02",
+ "department": "Küche",
+ "rows": [
+  {
+   "name": "Daniel",
+   "days": [
+    {
+     "weekday": 1,
+     "date": "2026-11-02",
+     "kind": "VACATION",
+     "start": null,
+     "end": null,
+     "raw": "U"
+    },
+    {
+     "weekday": 2,
+     "date": "2026-11-03",
+     "kind": "VACATION",
+     "start": null,
+     "end": null,
+     "raw": "U"
+    },
+    {
+     "weekday": 3,
+     "date": "2026-11-04",
+     "kind": "VACATION",
+     "start": null,
+     "end": null,
+     "raw": "U"
+    },
+    {
+     "weekday": 4,
+     "date": "2026-11-05",
+     "kind": "VACATION",
+     "start": null,
+     "end": null,
+     "raw": "U"
+    },
+    {
+     "weekday": 5,
+     "date": "2026-11-06",
+     "kind": "VACATION",
+     "start": null,
+     "end": null,
+     "raw": "U"
+    },
+    {
+     "weekday": 6,
+     "date": "2026-11-07",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    },
+    {
+     "weekday": 7,
+     "date": "2026-11-08",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    }
+   ]
+  },
+  {
+   "name": "Azis",
+   "days": [
+    {
+     "weekday": 1,
+     "date": "2026-11-02",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    },
+    {
+     "weekday": 2,
+     "date": "2026-11-03",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    },
+    {
+     "weekday": 3,
+     "date": "2026-11-04",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 4,
+     "date": "2026-11-05",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 5,
+     "date": "2026-11-06",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 6,
+     "date": "2026-11-07",
+     "kind": "WORK",
+     "start": "11:30",
+     "end": null,
+     "raw": "11:30"
+    },
+    {
+     "weekday": 7,
+     "date": "2026-11-08",
+     "kind": "WORK",
+     "start": "11:30",
+     "end": null,
+     "raw": "11:30"
+    }
+   ]
+  },
+  {
+   "name": "Alban",
+   "days": [
+    {
+     "weekday": 1,
+     "date": "2026-11-02",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 2,
+     "date": "2026-11-03",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 3,
+     "date": "2026-11-04",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 4,
+     "date": "2026-11-05",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 5,
+     "date": "2026-11-06",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    },
+    {
+     "weekday": 6,
+     "date": "2026-11-07",
+     "kind": "WORK",
+     "start": "11:30",
+     "end": null,
+     "raw": "11:30"
+    },
+    {
+     "weekday": 7,
+     "date": "2026-11-08",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    }
+   ]
+  },
+  {
+   "name": "Schahram",
+   "days": [
+    {
+     "weekday": 1,
+     "date": "2026-11-02",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    },
+    {
+     "weekday": 2,
+     "date": "2026-11-03",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    },
+    {
+     "weekday": 3,
+     "date": "2026-11-04",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 4,
+     "date": "2026-11-05",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 5,
+     "date": "2026-11-06",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 6,
+     "date": "2026-11-07",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 7,
+     "date": "2026-11-08",
+     "kind": "WORK",
+     "start": "11:30",
+     "end": null,
+     "raw": "11:30"
+    }
+   ]
+  },
+  {
+   "name": "Danylo",
+   "days": [
+    {
+     "weekday": 1,
+     "date": "2026-11-02",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 2,
+     "date": "2026-11-03",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 3,
+     "date": "2026-11-04",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    },
+    {
+     "weekday": 4,
+     "date": "2026-11-05",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    },
+    {
+     "weekday": 5,
+     "date": "2026-11-06",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 6,
+     "date": "2026-11-07",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 7,
+     "date": "2026-11-08",
+     "kind": "WORK",
+     "start": "11:30",
+     "end": null,
+     "raw": "11:30"
+    }
+   ]
+  },
+  {
+   "name": "Ali",
+   "days": [
+    {
+     "weekday": 1,
+     "date": "2026-11-02",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 2,
+     "date": "2026-11-03",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 3,
+     "date": "2026-11-04",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    },
+    {
+     "weekday": 4,
+     "date": "2026-11-05",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    },
+    {
+     "weekday": 5,
+     "date": "2026-11-06",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 6,
+     "date": "2026-11-07",
+     "kind": "WORK",
+     "start": "11:30",
+     "end": null,
+     "raw": "11:30"
+    },
+    {
+     "weekday": 7,
+     "date": "2026-11-08",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    }
+   ]
+  },
+  {
+   "name": "Hiroyuki",
+   "days": [
+    {
+     "weekday": 1,
+     "date": "2026-11-02",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 2,
+     "date": "2026-11-03",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 3,
+     "date": "2026-11-04",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 4,
+     "date": "2026-11-05",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 5,
+     "date": "2026-11-06",
+     "kind": "WORK",
+     "start": "13:30",
+     "end": null,
+     "raw": "13:30"
+    },
+    {
+     "weekday": 6,
+     "date": "2026-11-07",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    },
+    {
+     "weekday": 7,
+     "date": "2026-11-08",
+     "kind": "OFF",
+     "start": null,
+     "end": null,
+     "raw": "–"
+    }
+   ]
+  }
+ ]
+}

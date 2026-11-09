@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PhotoButton } from "@/components/PhotoViewer";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/admin-auth";
 import { addSessionAction, correctSessionAction } from "@/lib/admin-actions-corrections";
@@ -22,7 +23,7 @@ export default async function ZeitenPage({ searchParams }: { searchParams: Promi
   const filter = await currentDeptFilter();
   const sessions = await prisma.workSession.findMany({
     where: onlyOpen ? { status: { not: "CLOSED" } } : { workDate: { gte: dbDate(from), lte: dbDate(to) } },
-    include: { employee: { include: { primaryDept: { include: { parent: true } } } }, department: { include: { parent: true } }, clockInEvent: { include: { photo: true } }, clockOutEvent: { include: { photo: true } }, corrections: { orderBy: { createdAt: "asc" } } },
+    include: { employee: { include: { primaryDept: { include: { parent: true } } } }, department: { include: { parent: true } }, clockInEvent: { include: { photo: true } }, clockOutEvent: { include: { photo: true } }, corrections: { orderBy: { createdAt: "asc" } }, breaks: { select: { minutes: true } } },
     orderBy: [{ workDate: "desc" }, { clockInEvent: { effectiveAt: "desc" } }], take: 500,
   });
   const rows = sessions.filter((s) => matchesFilter(filter, s.employee.primaryDept, s.department));
@@ -85,14 +86,20 @@ export default async function ZeitenPage({ searchParams }: { searchParams: Promi
           const added = s.corrections.find((c) => c.field === "ADD_SESSION");
           const outAt = lastOut ? new Date(lastOut.correctedValue) : s.clockOutEvent?.effectiveAt ?? null;
           const voided = [...s.corrections].reverse().find((c) => c.field === "SESSION_VOID")?.correctedValue === "true";
+          // Aktuell gültige Pause: letzte Korrektur, sonst Summe der gestempelten Pausen (auch bei „Ausstempeln fehlt“, wo s.breakMinutes 0 ist)
+          const lastBreak = [...s.corrections].reverse().find((c) => c.field === "BREAK_MINUTES");
+          const currentBreak = lastBreak ? Number(lastBreak.correctedValue) : s.breaks.reduce((a, b) => a + b.minutes, 0);
           return (
             <details key={s.id} className={`rounded-xl border bg-coal ${s.status === "MISSING_CLOCK_OUT" ? "border-warn/60" : "border-line"}`}>
               <summary className="grid cursor-pointer grid-cols-2 gap-2 px-4 py-3 text-sm tabular sm:grid-cols-[7rem_1fr_6rem_6rem_6rem_6rem_9rem]">
                 <span>{s.workDate.toLocaleDateString("de-DE", { timeZone: "UTC", weekday: "short", day: "2-digit", month: "2-digit" })}</span>
-                <span className="font-semibold">{s.employee.firstName} {s.employee.lastName}</span>
+                <span className="flex flex-wrap items-center gap-2 font-semibold">{s.employee.firstName} {s.employee.lastName}
+                  {canPhotos && <PhotoButton name={`${s.employee.firstName} ${s.employee.lastName}`} date={s.workDate.toLocaleDateString("de-DE", { timeZone: "UTC", weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}
+                    photos={[["Kommen", s.clockInEvent], ["Gehen", s.clockOutEvent]].flatMap(([label, e]) => { const ev = e as typeof s.clockOutEvent; return ev?.photo && !ev.photo.deletedAt ? [{ id: ev.id, label: label as string, time: berlinTime(ev.effectiveAt) }] : []; })} />}
+                </span>
                 <span>{berlinTime(inAt)}{lastIn && !added && "*"}</span>
                 <span>{outAt ? `${berlinTime(outAt)}${lastOut && !added ? "*" : ""}` : "–"}</span>
-                <span className="text-mute">{s.breakMinutes} Min.</span>
+                <span className="text-mute">{s.status === "MISSING_CLOCK_OUT" ? currentBreak : s.breakMinutes} Min.</span>
                 <span className="font-bold">{fmtMinutes(s.payableMinutes)}</span>
                 <span className={s.status === "MISSING_CLOCK_OUT" ? "text-warn" : s.status === "OPEN" ? "text-good" : voided ? "text-bad" : "text-mute"}>
                   {voided ? "Fehlbuchung" : added ? "nachgetragen" : s.status === "MISSING_CLOCK_OUT" ? "Ausstempeln fehlt" : s.status === "OPEN" ? "eingestempelt" : corrected ? "korrigiert" : "ok"}
@@ -118,7 +125,7 @@ export default async function ZeitenPage({ searchParams }: { searchParams: Promi
                     <div className="grid items-start gap-4 sm:grid-cols-3">
                       <Field label="Beginn" name="clockIn" type="time" defaultValue={berlinTime(inAt)} />
                       <Field label="Ende" name="clockOut" type="time" defaultValue={outAt ? berlinTime(outAt) : ""} hint="vor Beginn = nächster Tag" />
-                      <Field label="Pause (Min.)" name="breakMinutes" type="number" min={0} defaultValue={s.breakMinutes} />
+                      <Field label="Pause (Min.)" name="breakMinutes" type="number" min={0} defaultValue={currentBreak} />
                     </div>
                     <Field label="Grund (Pflicht)" name="reason" required />
                     <Check label="Fehlbuchung – Schicht zählt nicht" name="void" />
