@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { EmploymentType, MonthlyTargetMethod } from "@prisma/client";
 import { prisma } from "./db";
+import { minimumWageCents } from "./calc/minwage";
 import { audit } from "./audit";
 import { hashSecret } from "./crypto";
 import { requireAdmin } from "./admin-auth";
@@ -165,6 +166,8 @@ export async function addWage(_: FormState, fd: FormData): Promise<FormState> {
     await audit(tx, { actorKind: "ADMIN", actorId: admin.id, action: "WAGE_ADDED", entityType: "HourlyWageHistory", entityId: w.id, employeeId: id, before: last, after: w });
   });
   revalidatePath(`/admin/mitarbeiter/${id}`);
+  const min = minimumWageCents(from);
+  if (cents < min) return { error: `Gespeichert – aber ACHTUNG: ${(cents / 100).toFixed(2).replace(".", ",")} € liegt unter dem gesetzlichen Mindestlohn von ${(min / 100).toFixed(2).replace(".", ",")} € (ab ${from.split("-").reverse().join(".")}). Ausnahmen nur z. B. für Auszubildende oder Jugendliche ohne Berufsabschluss.` };
   return { ok: "Stundenlohn gespeichert." };
 }
 
@@ -184,16 +187,17 @@ export async function resetPin(_: FormState, fd: FormData): Promise<FormState> {
 export async function savePortalVisibility(_: FormState, fd: FormData): Promise<FormState> {
   const admin = await requireAdmin("employees.manage");
   const id = s(fd, "id");
-  const keys = ["schedule", "weeklyTarget", "weeklyHours", "monthlyHours", "monthlyTarget", "accountBalance", "overtime", "minusHours", "includedOvertime", "vacationRemaining", "ownReports"] as const;
+  const keys = ["schedule", "weeklyTarget", "weeklyHours", "monthlyHours", "monthlyTarget", "accountBalance", "minusHours", "vacationRemaining", "vacationRequests"] as const;
   const data = Object.fromEntries(keys.map((k) => [k, fd.get(k) === "on"]));
   const enabled = fd.get("portalEnabled") === "on";
   await prisma.$transaction(async (tx) => {
     await tx.portalVisibility.upsert({ where: { employeeId: id }, update: data, create: { employeeId: id, ...data } });
-    await tx.employeeCredential.update({ where: { employeeId: id }, data: { portalEnabled: enabled } });
+    await tx.employeeCredential.update({ where: { employeeId: id }, data: { portalEnabled: enabled, ...(enabled ? {} : { portalInviteHash: null, portalInviteExpiresAt: null }) } });
+    if (!enabled) await tx.session.deleteMany({ where: { employeeId: id, kind: "PORTAL" } }); // gesperrt = sofort abgemeldet
     await audit(tx, { actorKind: "ADMIN", actorId: admin.id, action: "PORTAL_VISIBILITY", entityType: "Employee", entityId: id, employeeId: id, after: { enabled, ...data } });
   });
   revalidatePath(`/admin/mitarbeiter/${id}`);
-  return { ok: "Freigaben gespeichert." };
+  return { ok: enabled ? "Freigaben gespeichert. Änderungen gelten sofort am Handy." : "Gespeichert. Der Handy-Zugang ist gesperrt, der Mitarbeiter wurde abgemeldet." };
 }
 
 export async function setActive(_: FormState, fd: FormData): Promise<FormState> {

@@ -1,12 +1,13 @@
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/admin-auth";
-import { cancelAbsence, createAbsence } from "@/lib/admin-actions-absences";
+import { cancelAbsence, createAbsence, markVacationReminder } from "@/lib/admin-actions-absences";
 import { currentDeptFilter, matchesFilter } from "@/lib/dept";
 import { dateDe } from "@/lib/labels";
 import { berlinDate, fmtMinutes } from "@/lib/time";
 import { vacationOverview } from "@/lib/vacation";
 import { sendSickList } from "@/lib/admin-actions-reports";
 import { mailConfigured } from "@/lib/mail";
+import { decideVacationRequest } from "@/lib/admin-actions-portal";
 import { ActionForm, Field } from "./ActionForm";
 import { Section, Select } from "./Select";
 
@@ -31,6 +32,9 @@ export async function AbsencePage({ mode }: { mode: "sick" | "vacation" }) {
 
   // Urlaubskonto je Mitarbeiter für das laufende Jahr
   const vacation = mode === "vacation" ? await vacationOverview(visible, year) : [];
+  const requests = mode === "vacation" ? (await prisma.vacationRequest.findMany({ where: { status: "OPEN" }, include: { employee: { include: { primaryDept: { include: { parent: true } } } } }, orderBy: { startDate: "asc" } })).filter((r) => matchesFilter(filter, r.employee.primaryDept)) : [];
+  const decided = mode === "vacation" ? (await prisma.vacationRequest.findMany({ where: { status: { in: ["APPROVED", "REJECTED", "WITHDRAWN"] }, decidedAt: { gte: new Date(Date.now() - 14 * 86400000) } }, include: { employee: { include: { primaryDept: { include: { parent: true } } } } }, orderBy: { decidedAt: "desc" }, take: 20 })).filter((r) => matchesFilter(filter, r.employee.primaryDept)) : [];
+  const restBy = new Map(vacation.map((v) => [v.id, v.rest]));
 
   return (
     <div className="grid max-w-5xl gap-5">
@@ -52,13 +56,56 @@ export async function AbsencePage({ mode }: { mode: "sick" | "vacation" }) {
       )}
 
       {mode === "vacation" && (
-        <Section title={`Urlaubskonten ${year}`} hint="Anspruch aus dem aktuellen Vertrag, bei Eintritt im laufenden Jahr anteilig (je voller Monat 1/12, aufgerundet auf halbe Tage).">
-          <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-left text-sm tabular">
-            <thead className="text-xs tracking-wider text-mute"><tr><th className="py-2">MITARBEITER</th><th>ANSPRUCH</th><th>VORJAHR</th><th>GENOMMEN</th><th>GEPLANT</th><th>RESTURLAUB</th></tr></thead>
+        <Section title={`Urlaubsanträge vom Handy (${requests.length} offen)`} hint="Genehmigen trägt den Urlaub sofort ein (angerechnet wie beim Eintragen von Hand). Der Mitarbeiter sieht die Entscheidung am Handy.">
+          {requests.length === 0 ? <p className="text-mute">Keine offenen Anträge.</p> : (
+            <ul className="grid gap-3">{requests.map((r) => (
+              <li key={r.id} className="rounded-xl border border-warn/40 bg-warn/5 p-4">
+                <p className="font-semibold">{r.employee.firstName} {r.employee.lastName}: {dateDe(r.startDate)}{+r.endDate !== +r.startDate ? ` – ${dateDe(r.endDate)}` : ""}</p>
+                <p className="text-sm text-mute">Gestellt am {berlinDate(r.createdAt).split("-").reverse().join(".")}{restBy.has(r.employeeId) ? ` · Resturlaub ${restBy.get(r.employeeId)} Tage` : ""}{r.note ? ` · „${r.note}“` : ""}</p>
+                {canManage && (
+                  <ActionForm action={decideVacationRequest} submit="Entscheidung speichern" className="mt-3 grid gap-3 sm:grid-cols-[auto_1fr_auto] sm:items-end">
+                    <input type="hidden" name="id" value={r.id} />
+                    <Select label="Entscheidung" name="decision" options={[["approve", "Genehmigen"], ["reject", "Ablehnen"]]} />
+                    <Field label="Nachricht an Mitarbeiter (freiwillig)" name="note" />
+                  </ActionForm>
+                )}
+              </li>
+            ))}</ul>
+          )}
+          {decided.length > 0 && (
+            <div className="mt-4"><p className="text-sm text-mute">Zuletzt entschieden (14 Tage)</p>
+              <ul className="mt-1 grid gap-1 text-sm">{decided.map((r) => (
+                <li key={r.id} className="flex flex-wrap justify-between gap-2 border-t border-line py-1.5">
+                  <span>{r.employee.firstName} {r.employee.lastName}: {dateDe(r.startDate)}{+r.endDate !== +r.startDate ? ` – ${dateDe(r.endDate)}` : ""}</span>
+                  <span className={r.status === "APPROVED" ? "text-good" : r.status === "REJECTED" ? "text-bad" : "text-mute"}>{r.status === "APPROVED" ? "genehmigt" : r.status === "REJECTED" ? "abgelehnt" : "vom Mitarbeiter zurückgezogen"}{r.decisionNote ? ` · „${r.decisionNote}“` : ""}</span>
+                </li>
+              ))}</ul>
+            </div>
+          )}
+        </Section>
+      )}
+
+      {mode === "vacation" && (
+        <Section title={`Urlaubskonten ${year}`} hint="Anspruch aus dem aktuellen Vertrag, bei Eintritt anteilig. Resturlaub wird automatisch ins nächste Jahr übertragen und muss bis 31.03. genommen werden. Danach verfällt er nur, wenn der Hinweis an den Mitarbeiter hier dokumentiert ist.">
+          <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm tabular">
+            <thead className="text-xs tracking-wider text-mute"><tr><th className="py-2">MITARBEITER</th><th>ANSPRUCH</th><th>ÜBERTRAG</th><th>GENOMMEN</th><th>GEPLANT</th><th>RESTURLAUB</th><th>HINWEIS ZUM RESTURLAUB {year}</th></tr></thead>
             <tbody>{vacation.map((v) => (
-              <tr key={v.id} className="border-t border-line"><td className="py-2">{v.name}</td><td>{v.entitlement}</td><td>{v.carry}</td><td>{v.taken}</td><td>{v.planned}</td><td className={`font-bold ${v.rest < 0 ? "text-bad" : ""}`}>{v.rest}</td></tr>
+              <tr key={v.id} className="border-t border-line align-top">
+                <td className="py-2">{v.name}</td><td>{v.entitlement}</td>
+                <td>{v.carry}{v.carryOpen > 0 && <span className="block text-xs text-warn">{v.carryOpen} verfallen nach 31.03.</span>}{v.expired > 0 && <span className="block text-xs text-mute">{v.expired} verfallen</span>}{v.reminderMissing && <span className="block text-xs text-bad">Hinweis fehlte – verfällt nicht</span>}</td>
+                <td>{v.taken}</td><td>{v.planned}</td><td className={`font-bold ${v.rest < 0 ? "text-bad" : ""}`}>{v.rest}</td>
+                <td className="py-2">{v.reminderThisYear ? <span className="text-good">gegeben am {dateDe(v.reminderThisYear)}</span> : v.rest > 0 && canManage ? (
+                  <form action={markVacationReminder}><input type="hidden" name="id" value={v.id} /><input type="hidden" name="year" value={year} />
+                    <button className="rounded-lg border border-line px-3 py-1.5 text-xs hover:bg-slate">Hinweis gegeben ✓</button></form>
+                ) : <span className="text-mute">–</span>}</td>
+              </tr>
             ))}</tbody>
           </table></div>
+          <details className="mt-3 text-sm">
+            <summary className="cursor-pointer text-gold">Text für den Hinweis an Mitarbeiter</summary>
+            <p className="mt-2 whitespace-pre-line rounded-xl border border-line bg-ink p-4 text-paper">{`Liebe/r …,\n\ndu hast für ${year} noch … Urlaubstage. Bitte plane und nimm diesen Urlaub möglichst noch in diesem Jahr. Resturlaub wird ins Jahr ${year + 1} übertragen und muss bis zum 31.03.${year + 1} genommen werden – danach verfällt er.\n\nNAYA Restaurant & Bar`}</p>
+            <p className="mt-1 text-xs text-mute">Hinweis schriftlich (z. B. per E-Mail oder ausgedruckt mit Unterschrift) geben und danach hier „Hinweis gegeben“ anklicken. Am Terminal sieht der Mitarbeiter seinen Resturlaub und die Frist zusätzlich unter „Mein Dienstplan“.</p>
+          </details>
         </Section>
       )}
 

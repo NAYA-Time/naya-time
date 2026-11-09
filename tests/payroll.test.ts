@@ -61,3 +61,20 @@ describe("Grenzen für Aushilfen (Hinweise)", () => {
     expect(employmentLimitHints("FESTANGESTELLT", "2026-12-31", days(200))).toEqual([]);
   });
 });
+
+import { minimumWageCents, wageIssues } from "../lib/calc/minwage";
+describe("Mindestlohn", () => {
+  it("Werte je Datum", () => {
+    expect(minimumWageCents("2025-12-31")).toBe(1282);
+    expect(minimumWageCents("2026-01-01")).toBe(1390);
+    expect(minimumWageCents("2027-06-01")).toBe(1460);
+  });
+  it("14 € reicht 2026, ab 2027 nicht mehr → Vorwarnung", () => {
+    const w = [{ validFrom: "2026-01-01", validTo: null, centsPerHour: 1400 }];
+    expect(wageIssues(w, "2026-11-09")).toEqual([{ date: "2027-01-01", cents: 1400, minimum: 1460, future: true }]);
+  });
+  it("13,50 € liegt heute schon darunter; geplante Erhöhung auf 15 € behebt es", () => {
+    expect(wageIssues([{ validFrom: "2026-01-01", validTo: null, centsPerHour: 1350 }], "2026-11-09")[0]).toMatchObject({ date: "2026-11-09", future: false });
+    expect(wageIssues([{ validFrom: "2026-01-01", validTo: "2026-12-31", centsPerHour: 1400 }, { validFrom: "2027-01-01", validTo: null, centsPerHour: 1500 }], "2026-11-09")).toEqual([]);
+  });
+});

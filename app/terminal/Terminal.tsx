@@ -11,8 +11,10 @@ type Greeting = {
   ticket: string; firstName: string; today: string; serverTime: string; state: "OUT" | "IN" | "BREAK";
   since: string | null; shift: { start: string; end: string | null } | null; actions: Action[]; askBreak: boolean;
   minusMinutes?: number | null;
-  vacation?: { year: number; entitlement: number; taken: number; planned: number; rest: number } | null;
-  plan?: { title: string; range: string; published: boolean; days: { label: string; today: boolean; shifts: string[]; absence: string | null }[] }[];
+  vacation?: { year: number; entitlement: number; taken: number; planned: number; rest: number; carryOpen?: number; carryExpires?: string } | null;
+  notices?: string[];
+  planChanges?: string[];
+  plan?: { title: string; range: string; published: boolean; days: { label: string; today: boolean; shifts: string[]; absence: string | null; change?: string | null }[] }[];
 };
 type Screen =
   | { k: "loading" }
@@ -98,11 +100,12 @@ function WeekStrip({ week }: { week: NonNullable<Greeting["plan"]>[number] }) {
       <p className="mb-2 px-1 text-sm tracking-[0.2em] text-mute">DEINE WOCHE {week.range}{!week.published && <span className="tracking-normal text-warn"> · noch nicht veröffentlicht</span>}</p>
       <ol className="grid grid-cols-7 gap-1.5 text-center">
         {week.days.map((d) => (
-          <li key={d.label} className={`min-w-0 rounded-xl px-1 py-2 ${d.today ? "bg-gold/20 text-gold ring-1 ring-gold" : "bg-ink"}`}>
+          <li key={d.label} className={`min-w-0 rounded-xl px-1 py-2 ${d.change ? "bg-info/20 text-info ring-2 ring-info" : d.today ? "bg-gold/20 text-gold ring-1 ring-gold" : "bg-ink"}`}>
             <span className="block text-sm">{d.label.slice(0, 2)} <span className="text-mute">{d.label.slice(3, 9)}</span></span>
             {d.shifts.length ? d.shifts.map((t) => (
               <span key={t} className="block text-lg font-semibold leading-tight tabular">{t.split("–")[0]}<span className="block text-xs font-normal text-mute">bis {t.split("–")[1]}</span></span>
-            )) : <span className="block text-base leading-tight text-mute">{d.absence ?? "frei"}</span>}
+            )) : <span className={`block text-base leading-tight ${d.change ? "" : "text-mute"}`}>{d.absence ?? "frei"}</span>}
+            {d.change && <span className="block text-[11px] font-semibold leading-tight">{d.change.startsWith("gestrichen") ? `GESTRICHEN war ${d.change.match(/war (\d\d:\d\d)/)?.[1] ?? ""}` : d.change === "neu" ? "NEU" : `GEÄNDERT war ${d.change.match(/vorher (\d\d:\d\d)/)?.[1] ?? ""}`}</span>}
           </li>
         ))}
       </ol>
@@ -110,13 +113,27 @@ function WeekStrip({ week }: { week: NonNullable<Greeting["plan"]>[number] }) {
   );
 }
 
+/** Hinweis auf geänderte Dienste (blau). compact: eine Zeile, Einzelheiten stehen in der Wochenleiste. */
+function PlanChanges({ g, compact = false }: { g: Greeting; compact?: boolean }) {
+  if (!g.planChanges?.length) return null;
+  if (compact) return <p role="alert" className="rounded-2xl border-2 border-info bg-info/15 px-5 py-2 text-lg font-semibold text-info">Dein Dienstplan wurde geändert – siehe blau markierte Tage.</p>;
+  return (
+    <div role="alert" className="rounded-2xl border-2 border-info bg-info/15 px-5 py-2 text-info">
+      <p className="text-lg font-semibold">Dein Dienstplan wurde geändert:</p>
+      <ul className="grid gap-x-6 text-base leading-snug sm:grid-cols-2">{g.planChanges.map((c) => <li key={c} className="tabular">{c}</li>)}</ul>
+    </div>
+  );
+}
+
 function MyPlan({ g }: { g: Greeting }) {
   return (
     <div className="mx-auto grid w-full max-w-4xl flex-1 content-start gap-6 overflow-y-auto py-4">
       <h2 className="font-display text-5xl">Hallo {g.firstName}, deine Dienste</h2>
+      <PlanChanges g={g} />
       {g.vacation && (
         <p className="rounded-3xl border border-line bg-coal px-5 py-4 text-2xl">
           Urlaub {g.vacation.year}: <span className="font-semibold text-gold">noch {g.vacation.rest.toLocaleString("de-DE")} Tage</span>
+          {g.vacation.carryOpen ? <span className="block text-lg text-warn">Davon {g.vacation.carryOpen.toLocaleString("de-DE")} Tage aus dem Vorjahr – bitte bis {g.vacation.carryExpires?.split("-").reverse().join(".")} nehmen.</span> : null}
           <span className="block text-lg text-mute">Anspruch {g.vacation.entitlement.toLocaleString("de-DE")} · genommen {g.vacation.taken.toLocaleString("de-DE")}{g.vacation.planned ? ` · geplant ${g.vacation.planned.toLocaleString("de-DE")}` : ""}</span>
         </p>
       )}
@@ -128,9 +145,10 @@ function MyPlan({ g }: { g: Greeting }) {
           </div>
           <ul className="grid gap-1">
             {w.days.map((d) => (
-              <li key={d.label} className={`flex items-center justify-between rounded-xl px-4 py-2.5 text-2xl ${d.today ? "bg-gold/15 text-gold" : ""}`}>
+              <li key={d.label} className={`flex flex-wrap items-center justify-between gap-x-4 rounded-xl px-4 py-2.5 text-2xl ${d.change ? "bg-info/15 text-info ring-2 ring-info" : d.today ? "bg-gold/15 text-gold" : ""}`}>
                 <span className="tabular">{d.label}</span>
-                <span className="tabular">{d.shifts.length ? d.shifts.join(", ") : d.absence ?? <span className="text-mute">frei</span>}{d.shifts.length > 0 && d.absence ? ` · ${d.absence}` : ""}</span>
+                <span className="tabular">{d.shifts.length ? d.shifts.join(", ") : d.absence ?? <span className={d.change ? "" : "text-mute"}>frei</span>}{d.shifts.length > 0 && d.absence ? ` · ${d.absence}` : ""}</span>
+                {d.change && <span className="w-full text-right text-base font-semibold">Änderung: {d.change}</span>}
               </li>
             ))}
           </ul>
@@ -504,28 +522,40 @@ export default function Terminal() {
       const wanted: Action[] = screen.intent === "IN" ? ["CLOCK_IN"] : screen.intent === "OUT" ? ["CLOCK_OUT"] : ["BREAK_START", "BREAK_END"];
       const primary = g.actions.filter((a) => wanted.includes(a));
       const others = g.actions.filter((a) => !wanted.includes(a));
+      const compact = screen.intent === "IN"; // beim Einstempeln mehr Infos (Minus, Hinweise, Woche) → kompakter
       const stateText = g.state === "OUT" ? "Du bist nicht eingestempelt." : g.state === "IN" ? `Eingestempelt seit ${g.since} Uhr.` : "Du bist gerade in der Pause.";
       return (
         <Shell onBack={home}>
-          <div className={`mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center overflow-y-auto ${screen.intent === "IN" ? "gap-5" : "gap-8"}`}>
-            <div>
-              <h2 className={`font-display ${screen.intent === "IN" ? "text-5xl" : "text-6xl"}`}>Guten Tag, {g.firstName}!</h2>
-              <p className="mt-3 text-2xl text-mute">Heute: {g.today}</p>
+          {/* Infos scrollen bei Bedarf, die Knöpfe bleiben immer unten sichtbar */}
+          <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-4 pb-1">
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className={`flex min-h-full flex-col justify-center py-2 ${compact ? "gap-2" : "gap-8"}`}>
+                <div>
+                  <h2 className={`font-display ${compact ? "text-3xl" : "text-6xl"}`}>Guten Tag, {g.firstName}!</h2>
+                  <p className={`text-mute ${compact ? "mt-1 text-xl" : "mt-3 text-2xl"}`}>Heute: {g.today}</p>
+                </div>
+                <dl className={`grid grid-cols-3 gap-4 rounded-3xl border border-line bg-coal text-center ${compact ? "px-3 py-2" : "p-6"}`}>
+                  <div><dt className="text-xs tracking-[0.2em] text-mute sm:text-sm">GEPLANTER BEGINN</dt><dd className={`tabular ${compact ? "text-3xl leading-tight" : "mt-2 text-4xl"}`}>{g.shift ? `${g.shift.start}` : "–"}</dd></div>
+                  <div><dt className="text-xs tracking-[0.2em] text-mute sm:text-sm">GEPLANTES ENDE</dt><dd className={`tabular ${compact ? "text-3xl leading-tight" : "mt-2 text-4xl"}`}>{g.shift?.end ?? "–"}</dd></div>
+                  <div><dt className="text-xs tracking-[0.2em] text-gold sm:text-sm">AKTUELLE UHRZEIT</dt><dd className={`tabular text-gold ${compact ? "text-3xl leading-tight" : "mt-2 text-4xl"}`}>{now ? fmtTime(now) : ""}</dd></div>
+                </dl>
+                {screen.intent === "IN" && g.minusMinutes ? (
+                  <p role="alert" className="rounded-2xl border-2 border-bad bg-bad/15 px-5 py-2 text-xl font-semibold text-bad">
+                    Stundenkonto im Minus: −{Math.floor(g.minusMinutes / 60)}:{String(g.minusMinutes % 60).padStart(2, "0")} Std. (bis gestern)
+                  </p>
+                ) : null}
+                {screen.intent === "IN" && (g.notices ?? []).map((n) => (
+                  <p key={n} role="alert" className="rounded-2xl border-2 border-warn bg-warn/15 px-5 py-2 text-base font-semibold text-warn">⚠ {n}</p>
+                ))}
+                {screen.intent === "IN" && <PlanChanges g={g} compact={!!g.plan?.[0]} />}
+                {screen.intent === "IN" && g.plan?.[0] && <WeekStrip week={g.plan[0]} />}
+                <p className={`text-mute ${compact ? "text-lg" : "text-xl"}`}>
+                  {!g.shift && <span className="text-warn">Für heute ist kein Dienst geplant – du kannst trotzdem stempeln. </span>}
+                  {stateText}
+                </p>
+              </div>
             </div>
-            <dl className="grid grid-cols-3 gap-4 rounded-3xl border border-line bg-coal p-6 text-center">
-              <div><dt className="text-sm tracking-[0.2em] text-mute">GEPLANTER BEGINN</dt><dd className="mt-2 text-4xl tabular">{g.shift ? `${g.shift.start}` : "–"}</dd></div>
-              <div><dt className="text-sm tracking-[0.2em] text-mute">GEPLANTES ENDE</dt><dd className="mt-2 text-4xl tabular">{g.shift?.end ?? "–"}</dd></div>
-              <div><dt className="text-sm tracking-[0.2em] text-gold">AKTUELLE UHRZEIT</dt><dd className="mt-2 text-4xl tabular text-gold">{now ? fmtTime(now) : ""}</dd></div>
-            </dl>
-            {screen.intent === "IN" && g.minusMinutes ? (
-              <p role="alert" className="rounded-2xl border-2 border-bad bg-bad/15 px-6 py-4 text-2xl font-semibold text-bad">
-                Stundenkonto im Minus: −{Math.floor(g.minusMinutes / 60)}:{String(g.minusMinutes % 60).padStart(2, "0")} Std. (bis gestern)
-              </p>
-            ) : null}
-            {screen.intent === "IN" && g.plan?.[0] && <WeekStrip week={g.plan[0]} />}
-            {!g.shift && <p className="text-xl text-warn">Für heute ist kein Dienst geplant. Du kannst trotzdem stempeln.</p>}
-            <p className="text-xl text-mute">{stateText}</p>
-            <div className="grid gap-4">
+            <div className="grid shrink-0 gap-4">
               {primary.map((a) => <Big key={a} onClick={() => choose(g, a)}>{LABEL[a]}</Big>)}
               {!primary.length && <p className="text-xl text-warn">{screen.intent === "IN" ? "Du bist bereits eingestempelt." : "Dafür musst du zuerst einstempeln."}</p>}
               {others.length > 0 && (

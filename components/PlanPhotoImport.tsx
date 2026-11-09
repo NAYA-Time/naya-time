@@ -36,7 +36,7 @@ export function PlanPhotoImport({ monday, employees, defLabel }: { monday: strin
       fd.set("originalName", file.name);
       fd.set("monday", monday);
       const r = await readPlanPhoto(fd);
-      if (r.error) setError(r.error); else setP(r.proposal!);
+      if (r.error) setError(r.error); else { setP(r.proposal!); setReplace(r.proposal!.rows.some((x) => x.cells.some((c) => c.existing))); }
     } catch { setError("Das Foto konnte nicht verarbeitet werden. Bitte ein anderes Foto versuchen."); }
     setBusy("");
   }
@@ -105,7 +105,7 @@ export function PlanPhotoImport({ monday, employees, defLabel }: { monday: strin
                           </div>
                         )}
                         {c.raw && <span className="mt-1 block truncate text-[11px] text-mute" title={c.raw}>Foto: {c.raw}</span>}
-                        {c.existing && <span className="mt-1 block text-[11px] text-warn">schon: {c.existing}</span>}
+                        {c.existing && <span className={`mt-1 block text-[11px] ${c.kind !== "WORK" || !c.existing.startsWith(c.start ?? "x") || (c.end && !c.existing.endsWith(c.end)) ? "font-semibold text-warn" : "text-mute"}`}>bisher: {c.existing}</span>}
                       </td>
                     ))}
                   </tr>
@@ -121,10 +121,10 @@ export function PlanPhotoImport({ monday, employees, defLabel }: { monday: strin
           )}
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} className="size-5 accent-gold" />
-            Vorhandene Dienste an diesen Tagen ersetzen (sonst bleiben sie stehen und der Tag wird übersprungen)
+            Neuer Stand für diese Woche: vorhandene Dienste ersetzen und streichen, wo jetzt frei steht. Jeder sieht seine Änderungen farbig markiert. (Ohne Haken bleiben vorhandene Dienste stehen.)
           </label>
           <div className="flex flex-wrap gap-3">
-            <button type="button" onClick={save} disabled={!!busy || !count} className="min-h-12 rounded-xl bg-gold px-6 font-semibold text-ink disabled:opacity-50">
+            <button type="button" onClick={save} disabled={!!busy || (!count && !replace)} className="min-h-12 rounded-xl bg-gold px-6 font-semibold text-ink disabled:opacity-50">
               {busy === "save" ? "Bitte warten …" : `${count} Dienste übernehmen`}
             </button>
             <button type="button" onClick={() => setP(null)} className="min-h-12 rounded-xl border border-line px-6 hover:bg-slate">Verwerfen</button>

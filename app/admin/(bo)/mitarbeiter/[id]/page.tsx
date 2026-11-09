@@ -4,11 +4,16 @@ import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/admin-auth";
 import { addContract, addOvertimeRule, addWage, resetPin, savePortalVisibility, setActive, updateEmployee } from "@/lib/admin-actions-employees";
 import { ActionForm, Field } from "@/components/ActionForm";
+import { PortalInvite } from "@/components/PortalInvite";
 import { Check, Section, Select } from "@/components/Select";
 import { EMPLOYMENT_LABEL, METHOD_LABEL, dateDe, euro } from "@/lib/labels";
 import { berlinDate, fmtMinutes } from "@/lib/time";
 import { vacationInclude, vacationOverview, vacationTakenTotal } from "@/lib/vacation";
 import { sickCounts } from "@/lib/sick";
+import { wageIssues } from "@/lib/calc/minwage";
+import { toRows } from "@/lib/minwage";
+import { REMINDER_KINDS, reminderStatus } from "@/lib/calc/reminders";
+import { addReminder, reminderAction } from "@/lib/admin-actions-reminders";
 
 export default async function EmployeeDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ code?: string }> }) {
   const admin = await requireAdmin("employees.view");
@@ -20,6 +25,7 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
       primaryDept: true, subDept: true, credential: true, portalSettings: true,
       contracts: { orderBy: { validFrom: "desc" } }, overtimeRules: { orderBy: { validFrom: "desc" } }, wages: { orderBy: { validFrom: "desc" } },
       account: { include: { transactions: true } },
+      reminders: { orderBy: [{ doneAt: "asc" }, { dueDate: "asc" }] },
     },
   });
   if (!e) notFound();
@@ -137,8 +143,54 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
         </Section>
       )}
 
+      <Section title="Fristen und Erinnerungen" hint="Probezeit, Befristung, Belehrungen, Arbeitserlaubnis … Du siehst fällige Fristen im Dashboard. Mit Häkchen „Beim Einstempeln zeigen“ sieht der Mitarbeiter den Hinweis am Terminal, sobald die Vorlaufzeit erreicht ist.">
+        {e.reminders.length > 0 ? (
+          <ul className="grid gap-2">
+            {e.reminders.map((r) => {
+              const st = reminderStatus({ dueDate: r.dueDate.toISOString().slice(0, 10), remindDaysBefore: r.remindDaysBefore, done: !!r.doneAt }, today);
+              const cls = { DONE: "text-mute line-through", OVERDUE: "text-bad", DUE_SOON: "text-warn", LATER: "" }[st];
+              return (
+                <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line px-4 py-2">
+                  <span className={cls}><span className="font-semibold">{r.title}</span> · {dateDe(r.dueDate)}{st === "OVERDUE" ? " · überfällig" : st === "DUE_SOON" ? " · bald fällig" : ""}{r.doneAt ? ` · erledigt ${dateDe(r.doneAt)}` : ""}
+                    {!r.doneAt && <span className="block text-xs text-mute">{r.showOnTerminal ? `Mitarbeiter sieht es beim Einstempeln (ab ${r.remindDaysBefore} Tage vorher)` : "nur im Backoffice"}{r.repeatMonths ? ` · wiederholt sich alle ${r.repeatMonths} Monate` : ""}</span>}
+                  </span>
+                  {can("employees.manage") && !r.doneAt && (
+                    <span className="flex gap-2">
+                      {(["done", "terminal", "delete"] as const).map((op) => (
+                        <form key={op} action={reminderAction}><input type="hidden" name="rid" value={r.id} /><input type="hidden" name="op" value={op} />
+                          <button className="min-h-10 rounded-lg border border-line px-3 text-xs hover:bg-slate">{op === "done" ? "Erledigt ✓" : op === "terminal" ? (r.showOnTerminal ? "Am Terminal aus" : "Am Terminal zeigen") : "Löschen"}</button></form>
+                      ))}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        ) : <p className="text-mute">Noch keine Fristen eingetragen.</p>}
+        {can("employees.manage") && (
+          <details className="mt-3"><summary className="cursor-pointer text-gold">Frist hinzufügen</summary>
+            <div className="mt-4"><ActionForm action={addReminder} submit="Frist speichern">
+              <input type="hidden" name="id" value={e.id} />
+              <div className="grid gap-4 sm:grid-cols-3">
+                <Select label="Art" name="kind" options={Object.entries(REMINDER_KINDS).map(([k, v]): [string, string] => [k, v.label])} />
+                <Field label="Fällig am" name="dueDate" type="date" required />
+                <Field label="Erinnern ab (Tage vorher)" name="days" type="number" inputMode="numeric" min={0} hint="leer = Vorschlag je Art" />
+                <div className="sm:col-span-3"><Field label="Bezeichnung (optional)" name="title" hint="leer = Name der Art" /></div>
+                <div className="sm:col-span-3"><Field label="Text für den Mitarbeiter (optional)" name="text" hint="leer = Standardtext, z. B. „Deine Belehrung nach Infektionsschutzgesetz ist am … fällig.“" /></div>
+                <div className="sm:col-span-3"><Check label="Beim Einstempeln zeigen (Mitarbeiter sieht den Hinweis am Terminal)" name="terminal" /></div>
+              </div>
+            </ActionForm></div>
+          </details>
+        )}
+      </Section>
+
       {hourly && can("wages.view") && (
         <Section title="Stundenlohn" hint="Nur im Backoffice sichtbar.">
+          {wageIssues(toRows(e.wages), today).map((w) => (
+            <p key={w.date} role="alert" className="mb-3 rounded-xl border border-bad/50 bg-bad/10 px-4 py-3 text-bad">
+              {w.future ? `Ab ${dateDe(new Date(w.date))}` : "Aktuell"}: {euro(w.cents)} liegt unter dem Mindestlohn von {euro(w.minimum)}.{w.future ? " Bitte rechtzeitig einen neuen Stundenlohn ab diesem Datum eintragen." : ""}
+            </p>
+          ))}
           <table className="mb-4 w-full text-left text-sm tabular">
             <thead className="text-xs tracking-wider text-mute"><tr><th className="py-2">GÜLTIG</th><th>BRUTTO PRO STUNDE</th></tr></thead>
             <tbody>{e.wages.map((w) => <tr key={w.id} className="border-t border-line"><td className="py-2">{dateDe(w.validFrom)} – {w.validTo ? dateDe(w.validTo) : "heute"}</td><td>{euro(w.centsPerHour)}</td></tr>)}</tbody>
@@ -163,29 +215,29 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
       </Section>
 
       {can("employees.manage") && (
-        <Section title="Persönlicher Mitarbeiterbereich" hint="Standardmäßig aus. Der Mitarbeiter sieht nur, was du hier freischaltest. Stundenlöhne sind nie sichtbar.">
+        <Section title="Handy-Zugang „Mein NAYA“" hint="Am Handy kann nicht gestempelt werden. Der Mitarbeiter sieht nur, was du hier anhakst – Stunden immer nur für die laufende Woche und den laufenden Monat. Stundenlöhne sind nie sichtbar. Haken raus und speichern = sofort gesperrt.">
+          <p className="mb-3 text-sm">{!e.credential?.portalEnabled ? <span className="text-mute">Gesperrt.</span> : e.credential.portalPasswordHash ? <span className="text-good">Freigeschaltet, Passwort ist eingerichtet.</span> : <span className="text-warn">Freigeschaltet, aber noch nicht eingerichtet – Einladungslink erzeugen.</span>}</p>
           <ActionForm action={savePortalVisibility} submit="Freigaben speichern">
             <input type="hidden" name="id" value={e.id} />
-            <Check label="Mitarbeiterbereich freischalten" name="portalEnabled" defaultChecked={e.credential?.portalEnabled} />
+            <Check label="Handy-Zugang freischalten" name="portalEnabled" defaultChecked={e.credential?.portalEnabled} />
             <div className="grid gap-x-6 sm:grid-cols-2">
-              <Check label="Dienstplan" name="schedule" defaultChecked={v?.schedule} />
+              <Check label="Dienstplan (diese und nächste Woche)" name="schedule" defaultChecked={v?.schedule} />
+              <Check label="Gearbeitete Stunden diese Woche" name="weeklyHours" defaultChecked={v?.weeklyHours} />
               <Check label="Wochensoll" name="weeklyTarget" defaultChecked={v?.weeklyTarget} />
-              <Check label="Geleistete Wochenstunden" name="weeklyHours" defaultChecked={v?.weeklyHours} />
-              <Check label="Monatsstunden" name="monthlyHours" defaultChecked={v?.monthlyHours} />
+              <Check label="Gearbeitete Stunden dieser Monat" name="monthlyHours" defaultChecked={v?.monthlyHours} />
               <Check label="Monatssoll" name="monthlyTarget" defaultChecked={v?.monthlyTarget} />
-              <Check label="Stundenkonto" name="accountBalance" defaultChecked={v?.accountBalance} />
-              <Check label="Überstunden" name="overtime" defaultChecked={v?.overtime} />
-              <Check label="Minusstunden" name="minusHours" defaultChecked={v?.minusHours} />
-              <Check label="Abgegoltene Überstunden" name="includedOvertime" defaultChecked={v?.includedOvertime} />
-              <Check label="Resturlaub" name="vacationRemaining" defaultChecked={v?.vacationRemaining} />
-              <Check label="Eigene Arbeitszeitberichte" name="ownReports" defaultChecked={v?.ownReports} />
+              <Check label="Nur Minusstunden (rot)" name="minusHours" defaultChecked={v?.minusHours} />
+              <Check label="Stundenkonto Plus und Minus" name="accountBalance" defaultChecked={v?.accountBalance} />
+              <Check label="Resturlaub und genehmigter Urlaub" name="vacationRemaining" defaultChecked={v?.vacationRemaining} />
+              <Check label="Urlaubsanträge stellen" name="vacationRequests" defaultChecked={v?.vacationRequests} />
             </div>
           </ActionForm>
+          {e.credential?.portalEnabled && <div className="mt-4"><PortalInvite id={e.id} hasPassword={!!e.credential.portalPasswordHash} /></div>}
         </Section>
       )}
 
       {can("employees.manage") && (
-        <Section title={e.active ? "Mitarbeiter deaktivieren" : "Mitarbeiter aktivieren"} hint="Deaktivierte Mitarbeiter erscheinen nicht mehr am Terminal. Es wird nichts gelöscht.">
+        <Section title={e.active ? "Mitarbeiter deaktivieren" : "Mitarbeiter aktivieren"} hint="Deaktivierte Mitarbeiter erscheinen nicht mehr am Terminal. Es wird nichts gelöscht. Nach Ablauf der Aufbewahrungsfrist erinnert dich das System, dann kannst du unter „Aufbewahrung / Löschung“ löschen.">
           <ActionForm action={setActive} submit={e.active ? "Deaktivieren" : "Aktivieren"}>
             <input type="hidden" name="id" value={e.id} /><input type="hidden" name="active" value={e.active ? "false" : "true"} />
           </ActionForm>

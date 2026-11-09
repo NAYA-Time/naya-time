@@ -80,6 +80,9 @@ model Employee {
 
   credential         EmployeeCredential?
   pinHistory         PinHistory[]
+  reminders          EmployeeReminder[]
+  shiftChanges       ShiftChange[]
+  vacationRequests   VacationRequest[]
   pinEscrow          PinEscrow?
   portalSettings     PortalVisibility?
   contracts          EmployeeContract[]
@@ -200,17 +203,20 @@ model HourlyWageHistory {
 // ───────────────────────── Zugangsdaten ─────────────────────────
 
 model EmployeeCredential {
-  employeeId         String    @id @db.Uuid
-  employee           Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  pinHash            String? // scrypt, nie Klartext. null = PIN noch nicht festgelegt
-  pinSetAt           DateTime? @db.Timestamptz(3)
-  mustSetPin         Boolean   @default(true) // Ersteinrichtung bzw. nach Rücksetzung
-  setupCodeHash      String? // Einmalcode für Erst-Registrierung am Terminal
-  setupCodeExpiresAt DateTime? @db.Timestamptz(3)
-  failedAttempts     Int       @default(0)
-  lockedUntil        DateTime? @db.Timestamptz(3)
-  portalEnabled      Boolean   @default(false)
-  updatedAt          DateTime  @updatedAt @db.Timestamptz(3)
+  employeeId            String    @id @db.Uuid
+  employee              Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  pinHash               String? // scrypt, nie Klartext. null = PIN noch nicht festgelegt
+  pinSetAt              DateTime? @db.Timestamptz(3)
+  mustSetPin            Boolean   @default(true) // Ersteinrichtung bzw. nach Rücksetzung
+  setupCodeHash         String? // Einmalcode für Erst-Registrierung am Terminal
+  setupCodeExpiresAt    DateTime? @db.Timestamptz(3)
+  failedAttempts        Int       @default(0)
+  lockedUntil           DateTime? @db.Timestamptz(3)
+  portalEnabled         Boolean   @default(false)
+  portalPasswordHash    String? // scrypt, Passwort fürs Handy-Portal (nie Klartext)
+  portalInviteHash      String? // Einladungslink (nur Hash), einmal verwendbar
+  portalInviteExpiresAt DateTime? @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
 
   @@map("employee_credentials")
 }
@@ -256,6 +262,7 @@ model PortalVisibility {
   includedOvertime  Boolean  @default(false)
   vacationRemaining Boolean  @default(false)
   ownReports        Boolean  @default(false)
+  vacationRequests  Boolean  @default(false) // Urlaubsanträge am Handy stellen
 
   @@map("portal_visibility")
 }
@@ -723,6 +730,8 @@ model VacationBalance {
   carryOverExpiresAt   DateTime? @db.Date
   manualAdjustHalfDays Int       @default(0)
   adjustReason         String?
+  reminderSentAt       DateTime? @db.Timestamptz(3) // Hinweis an Mitarbeiter: Resturlaub dieses Jahres nehmen, sonst Verfall nach 31.03. des Folgejahres
+  reminderById         String?   @db.Uuid
   updatedAt            DateTime  @updatedAt @db.Timestamptz(3)
 
   @@unique([employeeId, year])
@@ -1125,4 +1134,67 @@ model RateLimitBucket {
   resetAt DateTime @db.Timestamptz(3)
 
   @@map("rate_limit_buckets")
+}
+
+// Fristen und Erinnerungen je Mitarbeiter (Probezeit, Befristung, Belehrungen …). Optional als Hinweis beim Einstempeln.
+model EmployeeReminder {
+  id               String    @id @default(uuid()) @db.Uuid
+  employeeId       String    @db.Uuid
+  employee         Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  kind             String // PROBATION_END, CONTRACT_END, IFSG, HYGIENE, WORK_PERMIT, OTHER
+  title            String
+  dueDate          DateTime  @db.Date
+  remindDaysBefore Int       @default(14)
+  repeatMonths     Int? // nach "erledigt" automatisch neue Frist (z. B. Belehrung alle 24 Monate)
+  showOnTerminal   Boolean   @default(false) // Mitarbeiter sieht den Hinweis beim Einstempeln
+  terminalText     String?
+  doneAt           DateTime? @db.Timestamptz(3)
+  doneById         String?   @db.Uuid
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  createdById      String?   @db.Uuid
+
+  @@index([employeeId, dueDate])
+  @@map("employee_reminders")
+}
+
+// Geänderte Dienste (Gunnar 09.11.2026): jeder Mitarbeiter sieht seine Änderungen farbig markiert (Terminal und Handy)
+model ShiftChange {
+  id         String    @id @default(uuid()) @db.Uuid
+  employeeId String    @db.Uuid
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  workDate   DateTime  @db.Date
+  before     String? // z. B. "15:00–23:30"; null = vorher frei
+  after      String? // null = Dienst gestrichen
+  changedAt  DateTime  @default(now()) @db.Timestamptz(3)
+  seenAt     DateTime? @db.Timestamptz(3) // Mitarbeiter hat den Hinweis gesehen (Banner verschwindet, Markierung am Tag bleibt)
+
+  @@index([employeeId, workDate])
+  @@map("shift_changes")
+}
+
+enum VacationRequestStatus {
+  OPEN
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+// Urlaubsantrag aus dem Handy-Portal. Erst die Genehmigung im Backend legt die Abwesenheit an.
+model VacationRequest {
+  id           String                @id @default(uuid()) @db.Uuid
+  employeeId   String                @db.Uuid
+  employee     Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  startDate    DateTime              @db.Date
+  endDate      DateTime              @db.Date
+  note         String?
+  status       VacationRequestStatus @default(OPEN)
+  createdAt    DateTime              @default(now()) @db.Timestamptz(3)
+  decidedById  String?               @db.Uuid
+  decidedAt    DateTime?             @db.Timestamptz(3)
+  decisionNote String?
+  absenceId    String?               @db.Uuid
+
+  @@index([status, createdAt])
+  @@index([employeeId, startDate])
+  @@map("vacation_requests")
 }

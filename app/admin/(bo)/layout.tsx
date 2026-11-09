@@ -23,6 +23,7 @@ const NAV: { href?: string; label: string; perm?: string; soon?: string; owner?:
   { href: "/admin/berichte", label: "Berichte", perm: "reports.create" },
   { href: "/admin/email", label: "E-Mail-Automatisierung", perm: "reports.email" },
   { href: "/admin/terminals", label: "Terminals", perm: "terminal.manage" },
+  { href: "/admin/loeschung", label: "Aufbewahrung / Löschung", owner: true },
   { href: "/admin/protokoll", label: "Änderungsprotokoll", perm: "settings.manage" },
   { href: "/admin/administratoren", label: "Administratoren", perm: "admins.manage" },
   { href: "/admin/einstellungen", label: "Einstellungen", perm: "settings.manage" },

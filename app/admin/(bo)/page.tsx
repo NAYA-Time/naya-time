@@ -2,7 +2,11 @@ import { PhotoButton } from "@/components/PhotoViewer";
 import { requireAdmin } from "@/lib/admin-auth";
 import { todayOverview, type LiveStatus } from "@/lib/dashboard";
 import { currentDeptFilter } from "@/lib/dept";
-import { berlinLongDate } from "@/lib/time";
+import { berlinDate, berlinLongDate } from "@/lib/time";
+import { minimumWageProblems } from "@/lib/minwage";
+import { prisma } from "@/lib/db";
+import { reminderStatus } from "@/lib/calc/reminders";
+import { formerEmployees } from "@/lib/erasure";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +25,15 @@ const SEV = { INFO: "border-line", WARNING: "border-warn/60", CRITICAL: "border-
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const admin = await requireAdmin("dashboard.view");
+  const minWage = admin.permissions.has("wages.view") ? await minimumWageProblems() : [];
+  const todayYmd = berlinDate(new Date());
+  const dueReminders = admin.permissions.has("employees.view")
+    ? (await prisma.employeeReminder.findMany({ where: { doneAt: null, employee: { active: true } }, include: { employee: true }, orderBy: { dueDate: "asc" } }))
+        .map((r) => ({ r, st: reminderStatus({ dueDate: r.dueDate.toISOString().slice(0, 10), remindDaysBefore: r.remindDaysBefore, done: false }, todayYmd) }))
+        .filter((x) => x.st === "OVERDUE" || x.st === "DUE_SOON")
+    : [];
+  const erasable = admin.roleKey === "OWNER" ? (await formerEmployees()).filter((f) => f.deletable) : [];
+  const openRequests = admin.permissions.has("employees.view") ? await prisma.vacationRequest.count({ where: { status: "OPEN" } }) : 0;
   const canPhotos = admin.permissions.has("photos.view");
   const sp = await searchParams;
   const filter = await currentDeptFilter();
@@ -31,6 +44,36 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   ] as const;
   return (
     <div className="grid gap-8">
+      {minWage.length > 0 && (
+        <div role="alert" className="rounded-xl border border-bad/50 bg-bad/10 px-4 py-3 text-bad">
+          <p className="font-semibold">Mindestlohn prüfen</p>
+          <ul className="mt-1 text-sm">
+            {minWage.map((m) => m.issues.map((i) => (
+              <li key={m.id + i.date}><a href={`/admin/mitarbeiter/${m.id}`} className="underline">{m.name}</a>: {(i.cents / 100).toFixed(2).replace(".", ",")} € {i.future ? `ab ${i.date.split("-").reverse().join(".")}` : "aktuell"} unter Mindestlohn {(i.minimum / 100).toFixed(2).replace(".", ",")} €</li>
+            )))}
+          </ul>
+        </div>
+      )}
+      {openRequests > 0 && (
+        <a href="/admin/urlaub" className="block rounded-xl border border-gold/50 bg-gold/10 px-4 py-3 text-gold">
+          <span className="font-semibold">Urlaubsanträge:</span> {openRequests} {openRequests === 1 ? "Antrag wartet" : "Anträge warten"} auf deine Entscheidung →
+        </a>
+      )}
+      {erasable.length > 0 && (
+        <a href="/admin/loeschung" className="block rounded-xl border border-warn/50 bg-warn/10 px-4 py-3 text-warn">
+          <span className="font-semibold">Löschen fällig:</span> Bei {erasable.length === 1 ? `${erasable[0].name}` : `${erasable.length} ehemaligen Mitarbeitern`} ist die Aufbewahrungsfrist abgelaufen. Bitte prüfen und löschen →
+        </a>
+      )}
+      {dueReminders.length > 0 && (
+        <div className="rounded-xl border border-warn/50 bg-warn/10 px-4 py-3">
+          <p className="font-semibold text-warn">Fristen</p>
+          <ul className="mt-1 text-sm">
+            {dueReminders.map(({ r, st }) => (
+              <li key={r.id} className={st === "OVERDUE" ? "text-bad" : "text-paper"}><a href={`/admin/mitarbeiter/${r.employeeId}`} className="underline">{r.employee.firstName} {r.employee.lastName}</a>: {r.title} – {r.dueDate.toISOString().slice(0, 10).split("-").reverse().join(".")}{st === "OVERDUE" ? " (überfällig)" : ""}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {sp["kein-recht"] && <p className="rounded-xl border border-warn/40 bg-warn/10 px-4 py-3 text-warn">Für diesen Bereich fehlt dir die Berechtigung.</p>}
       <div>
         <p className="text-sm tracking-[0.25em] text-gold">HEUTE IM NAYA</p>
