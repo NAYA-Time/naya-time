@@ -1,0 +1,19 @@
+{
+  "name": "naya-time",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NAYA TIME – Stempeluhr für Restaurant NAYA (iPad-Terminal mit PIN + Foto, Admin, Excel-Export)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning src/server.js",
+    "dev": "node --no-warnings=ExperimentalWarning --watch src/server.js",
+    "test": "node --no-warnings=ExperimentalWarning --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2"
+  }
+}

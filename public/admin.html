@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#14110f">
+  <link rel="icon" href="/icon.svg">
+  <title>NAYA TIME – Verwaltung</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="login" class="login" hidden>
+    <h1 class="marke">NAYA <b>TIME</b></h1>
+    <p class="text-2">Verwaltung</p>
+    <form id="login-form">
+      <input class="feld" type="password" id="passwort" placeholder="Admin-Passwort" autocomplete="current-password" required>
+      <button class="knopf haupt" type="submit">Anmelden</button>
+    </form>
+    <p id="login-fehler" class="text-2"></p>
+  </div>
+
+  <div id="app" class="admin" hidden>
+    <header>
+      <h1 class="marke">NAYA <b>TIME</b></h1>
+      <nav class="reiter" id="reiter">
+        <button data-r="stempel" class="aktiv">Stempelungen</button>
+        <button data-r="auswertung">Auswertung &amp; Export</button>
+        <button data-r="mitarbeiter">Mitarbeiter</button>
+        <button data-r="einstellungen">Einstellungen</button>
+        <button id="abmelden">Abmelden</button>
+      </nav>
+    </header>
+
+    <!-- Stempelungen -->
+    <section data-seite="stempel">
+      <div class="karte">
+        <div class="zeile">
+          <input class="feld" type="month" id="st-monat">
+          <select class="feld" id="st-ma"><option value="">Alle Mitarbeiter</option></select>
+        </div>
+      </div>
+      <div class="karte">
+        <h2>Stempel nachtragen</h2>
+        <form class="zeile" id="nachtragen">
+          <select class="feld" id="nt-ma" required></select>
+          <select class="feld" id="nt-typ"><option value="ein">Kommen</option><option value="aus">Gehen</option></select>
+          <input class="feld" type="datetime-local" id="nt-zeit" required>
+          <input class="feld" id="nt-notiz" placeholder="Grund (z. B. vergessen)">
+          <button class="knopf haupt" type="submit">Nachtragen</button>
+        </form>
+      </div>
+      <div class="karte">
+        <table>
+          <thead><tr><th>Datum</th><th>Uhrzeit</th><th>Mitarbeiter</th><th>Art</th><th>Foto</th><th>Notiz</th><th></th></tr></thead>
+          <tbody id="st-liste"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Auswertung -->
+    <section data-seite="auswertung" hidden>
+      <div class="karte">
+        <div class="zeile">
+          <input class="feld" type="month" id="aw-monat">
+          <button class="knopf haupt" id="export">Excel herunterladen</button>
+          <span class="text-2" id="aw-regel"></span>
+        </div>
+      </div>
+      <div class="karte" id="aw-uebersicht"></div>
+      <div id="aw-details"></div>
+    </section>
+
+    <!-- Mitarbeiter -->
+    <section data-seite="mitarbeiter" hidden>
+      <div class="karte">
+        <h2>Neuer Mitarbeiter</h2>
+        <form class="zeile" id="ma-neu">
+          <input class="feld" id="ma-name" placeholder="Name" required>
+          <input class="feld" id="ma-pin" placeholder="PIN (4–6 Ziffern)" inputmode="numeric" pattern="\d{4,6}" required>
+          <button class="knopf haupt" type="submit">Anlegen</button>
+        </form>
+      </div>
+      <div class="karte">
+        <table>
+          <thead><tr><th>Name</th><th>Status</th><th></th></tr></thead>
+          <tbody id="ma-liste"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Einstellungen -->
+    <section data-seite="einstellungen" hidden>
+      <div class="karte">
+        <h2>iPad als Stempeluhr freischalten</h2>
+        <p class="text-2">Öffne diesen Link einmal in Safari auf dem iPad. Danach „Teilen → Zum Home-Bildschirm“ wählen. Den Link nicht weitergeben – wer ihn hat, kann das Terminal öffnen (Stempeln geht trotzdem nur mit PIN).</p>
+        <div class="zeile"><input class="feld" id="terminal-link" readonly style="flex:1;min-width:260px"><button class="knopf" id="link-kopieren">Kopieren</button></div>
+      </div>
+      <div class="karte">
+        <h2>Regeln</h2>
+        <p id="regeln" class="text-2"></p>
+        <p class="text-2">Änderbar in der Datei <code>.env</code> auf dem Server.</p>
+      </div>
+      <div class="karte">
+        <h2>Änderungsprotokoll</h2>
+        <table><thead><tr><th>Zeitpunkt</th><th>Aktion</th><th>Details</th></tr></thead><tbody id="protokoll"></tbody></table>
+      </div>
+    </section>
+  </div>
+
+  <div class="overlay" id="foto-overlay"><img class="gross-foto" id="gross-foto" alt="Stempelfoto"></div>
+  <div class="meldung" id="meldung"></div>
+  <script src="/admin.js"></script>
+</body>
+</html>

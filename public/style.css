@@ -1,0 +1,105 @@
+:root {
+  --bg: #14110f;
+  --flaeche: #1f1b18;
+  --flaeche-2: #2a2521;
+  --linie: #3a332d;
+  --text: #f3ede6;
+  --text-2: #b3a89c;
+  --gold: #c9a46a;
+  --gruen: #5fb37a;
+  --rot: #d0644f;
+  --radius: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); }
+body { -webkit-tap-highlight-color: transparent; }
+button { font: inherit; color: inherit; cursor: pointer; }
+input, select, textarea { font: inherit; }
+
+.marke { font-family: "Didot", "Bodoni 72", Georgia, serif; letter-spacing: .18em; font-weight: 400; }
+.marke b { color: var(--gold); font-weight: 400; }
+
+/* ---------------- Terminal ---------------- */
+.terminal { height: 100vh; height: 100dvh; display: flex; flex-direction: column; user-select: none; -webkit-user-select: none; overflow: hidden; }
+.terminal header { display: flex; justify-content: space-between; align-items: baseline; padding: 22px 32px 10px; }
+.terminal header .marke { font-size: 28px; margin: 0; }
+.uhr { text-align: right; }
+.uhr .zeit { font-size: 44px; font-variant-numeric: tabular-nums; font-weight: 300; }
+.uhr .datum { color: var(--text-2); font-size: 16px; }
+.hinweis-zeile { padding: 0 32px 14px; color: var(--text-2); font-size: 17px; }
+.namen { flex: 1; overflow-y: auto; padding: 8px 32px 32px; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; align-content: start; }
+.name-kachel { background: var(--flaeche); border: 1px solid var(--linie); border-radius: var(--radius); padding: 22px 18px; text-align: left; display: flex; flex-direction: column; gap: 8px; min-height: 104px; transition: transform .08s; }
+.name-kachel:active { transform: scale(.97); background: var(--flaeche-2); }
+.name-kachel .n { font-size: 22px; font-weight: 500; }
+.name-kachel .s { font-size: 15px; color: var(--text-2); display: flex; align-items: center; gap: 8px; }
+.punkt { width: 10px; height: 10px; border-radius: 50%; background: var(--linie); display: inline-block; }
+.name-kachel.da { border-color: rgba(95,179,122,.55); }
+.name-kachel.da .punkt { background: var(--gruen); box-shadow: 0 0 8px var(--gruen); }
+
+.overlay { position: fixed; inset: 0; background: rgba(10,8,7,.92); display: none; align-items: center; justify-content: center; z-index: 10; }
+.overlay.offen { display: flex; }
+.pin-box { display: grid; grid-template-columns: 300px 320px; gap: 40px; align-items: center; }
+@media (max-width: 760px) { .pin-box { grid-template-columns: 1fr; gap: 20px; } .kamera { width: 220px !important; height: 165px !important; margin: 0 auto; } }
+.kamera { width: 300px; height: 225px; border-radius: var(--radius); background: #000; object-fit: cover; transform: scaleX(-1); border: 1px solid var(--linie); }
+.kamera-text { color: var(--text-2); font-size: 14px; text-align: center; margin-top: 8px; }
+.pin-titel { font-size: 26px; text-align: center; margin: 0 0 4px; }
+.pin-unter { color: var(--text-2); text-align: center; margin: 0 0 18px; min-height: 1.3em; }
+.pin-unter.fehler { color: var(--rot); }
+.pin-punkte { display: flex; justify-content: center; gap: 14px; margin-bottom: 22px; height: 18px; }
+.pin-punkte span { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--text-2); }
+.pin-punkte span.voll { background: var(--gold); border-color: var(--gold); }
+.tasten { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.tasten button { height: 72px; border-radius: 50px; background: var(--flaeche-2); border: 1px solid var(--linie); font-size: 28px; }
+.tasten button:active { background: var(--linie); }
+.tasten .klein { font-size: 17px; color: var(--text-2); }
+.tasten .ok { background: var(--gold); color: #1a140d; border-color: var(--gold); font-weight: 600; font-size: 20px; }
+.tasten .ok:disabled { opacity: .35; }
+
+.ergebnis { text-align: center; }
+.ergebnis .gross { font-size: 64px; font-weight: 300; font-variant-numeric: tabular-nums; }
+.ergebnis .titel { font-size: 32px; margin: 10px 0 6px; }
+.ergebnis .unter { color: var(--text-2); font-size: 20px; }
+.ergebnis .zeichen { width: 96px; height: 96px; margin: 0 auto 10px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 52px; }
+.ergebnis.ein .zeichen { background: rgba(95,179,122,.18); color: var(--gruen); }
+.ergebnis.aus .zeichen { background: rgba(201,164,106,.18); color: var(--gold); }
+
+/* ---------------- Admin ---------------- */
+.admin { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; }
+.admin header { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+.admin header .marke { font-size: 22px; margin: 0; }
+.reiter { display: flex; gap: 6px; flex-wrap: wrap; }
+.reiter button { background: transparent; border: 1px solid var(--linie); border-radius: 30px; padding: 8px 16px; color: var(--text-2); }
+.reiter button.aktiv { background: var(--flaeche-2); color: var(--text); border-color: var(--gold); }
+.karte { background: var(--flaeche); border: 1px solid var(--linie); border-radius: var(--radius); padding: 18px; margin-bottom: 16px; }
+.karte h2 { font-size: 17px; margin: 0 0 12px; font-weight: 600; }
+.zeile { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.feld { background: var(--bg); border: 1px solid var(--linie); border-radius: 10px; padding: 9px 12px; color: var(--text); }
+.knopf { background: var(--flaeche-2); border: 1px solid var(--linie); border-radius: 10px; padding: 9px 14px; }
+.knopf.haupt { background: var(--gold); color: #1a140d; border-color: var(--gold); font-weight: 600; }
+.knopf.gefahr { color: var(--rot); }
+.knopf.klein { padding: 5px 10px; font-size: 14px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th { text-align: left; color: var(--text-2); font-weight: 500; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+th, td { padding: 9px 8px; border-bottom: 1px solid var(--linie); vertical-align: middle; }
+td.zahl, th.zahl { text-align: right; font-variant-numeric: tabular-nums; }
+tr.summe td { font-weight: 600; background: var(--flaeche-2); }
+.marker { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 20px; background: var(--flaeche-2); color: var(--text-2); }
+.marker.gruen { color: var(--gruen); }
+.marker.rot { color: var(--rot); }
+.marker.gold { color: var(--gold); }
+.mini-foto { width: 44px; height: 33px; object-fit: cover; border-radius: 6px; cursor: zoom-in; background: #000; }
+.leer { color: var(--text-2); padding: 12px 0; }
+.meldung { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--flaeche-2); border: 1px solid var(--linie); padding: 12px 18px; border-radius: 12px; display: none; z-index: 20; }
+.meldung.zeigen { display: block; }
+.meldung.fehler { border-color: var(--rot); }
+.login { max-width: 360px; margin: 14vh auto; text-align: center; }
+.login .feld { width: 100%; margin: 18px 0 12px; }
+.login .knopf { width: 100%; }
+.gross-foto { max-width: 90vw; max-height: 80vh; border-radius: var(--radius); }
+.ma-block { margin-bottom: 22px; }
+.ma-block h3 { margin: 0 0 6px; font-size: 18px; display: flex; justify-content: space-between; }
+details summary { cursor: pointer; color: var(--text-2); }
+.text-2 { color: var(--text-2); }
