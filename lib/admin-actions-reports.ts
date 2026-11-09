@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import type { DeptFilter, ReportType } from "@prisma/client";
+import { DEPT_FILTERS, asFilter } from "./dept";
 import { prisma } from "./db";
 import { audit } from "./audit";
 import { requireAdmin } from "./admin-auth";
@@ -40,7 +41,7 @@ export async function saveSchedule(_: FormState, fd: FormData): Promise<FormStat
   const timeOfDay = String(fd.get("timeOfDay") ?? "08:00");
   const dayOfWeek = Number(fd.get("dayOfWeek") || 1), dayOfMonth = Number(fd.get("dayOfMonth") || 1);
   const recipientIds = fd.getAll("recipients").map(String);
-  if (!["WEEKLY", "MONTHLY", "PAYROLL_HOURLY"].includes(reportType) || !["ALL", "KUECHE", "SERVICE"].includes(deptFilter)) return { error: "Ungültige Auswahl." };
+  if (!["WEEKLY", "MONTHLY", "PAYROLL_HOURLY"].includes(reportType) || !(DEPT_FILTERS as readonly string[]).includes(deptFilter)) return { error: "Ungültige Auswahl." };
   if (!name) return { error: "Bitte einen Namen angeben." };
   if (!/^\d{2}:\d{2}$/.test(timeOfDay)) return { error: "Bitte eine Uhrzeit angeben." };
   if (dayOfMonth < 1 || dayOfMonth > 28) return { error: "Tag im Monat bitte zwischen 1 und 28." };
@@ -89,7 +90,7 @@ export async function setScheduleRecipients(_: FormState, fd: FormData): Promise
 export async function sendSickList(_: FormState, fd: FormData): Promise<FormState> {
   const admin = await requireAdmin("reports.email");
   const from = String(fd.get("von") ?? ""), to = String(fd.get("bis") ?? "");
-  const filter = (["ALL", "KUECHE", "SERVICE"] as const).find((f) => f === fd.get("abteilung")) ?? "ALL";
+  const filter = asFilter(fd.get("abteilung"));
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return { error: "Bitte einen gültigen Zeitraum wählen." };
   const ids = fd.getAll("recipient").map(String);
   const recipients = await prisma.emailRecipient.findMany({ where: { id: { in: ids }, active: true } });

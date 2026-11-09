@@ -4,7 +4,7 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { addShift, copyPreviousWeek, deleteShiftQuick, mondayOf, publishWeek, saveDefaultShift } from "@/lib/admin-actions-schedule";
 import { defaultShift } from "@/lib/schedule-defaults";
 import { checkPlan } from "@/lib/calc/schedule-checks";
-import { currentDeptFilter, matchesFilter } from "@/lib/dept";
+import { currentDeptFilter, matchesEmp, matchesFilter } from "@/lib/dept";
 import { holidayName } from "@/lib/holidays";
 import { berlinDate, berlinTime, dbDate, fmtMinutes, minutesBetween } from "@/lib/time";
 import { ActionForm, Field } from "@/components/ActionForm";
@@ -40,7 +40,7 @@ export default async function DienstplanPage({ searchParams }: { searchParams: P
   ]);
 
   // Abteilungsfilter: Mitarbeiter mit Hauptabteilung im Filter oder mit einem Dienst in einer passenden Abteilung
-  const visible = emps.filter((e) => matchesFilter(filter, e.primaryDept) || shifts.some((s) => s.employeeId === e.id && matchesFilter(filter, s.department)));
+  const visible = emps.filter((e) => matchesEmp(filter, e) || shifts.some((s) => s.employeeId === e.id && matchesFilter(filter, s.department)));
   const visibleIds = new Set(visible.map((e) => e.id));
 
   const timed = shifts.filter((s) => s.startAt && s.endAt && s.kind === "WORK");

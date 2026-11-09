@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/admin-auth";
 import { addSessionAction, correctSessionAction } from "@/lib/admin-actions-corrections";
 import { ADD_SESSION_PERMISSION } from "@/lib/corrections";
-import { currentDeptFilter, matchesFilter } from "@/lib/dept";
+import { currentDeptFilter, matchesEmp } from "@/lib/dept";
 import { berlinDate, berlinTime, dbDate, fmtMinutes } from "@/lib/time";
 import { ActionForm, Field } from "@/components/ActionForm";
 import { Check } from "@/components/Select";
@@ -26,7 +26,7 @@ export default async function ZeitenPage({ searchParams }: { searchParams: Promi
     include: { employee: { include: { primaryDept: { include: { parent: true } } } }, department: { include: { parent: true } }, clockInEvent: { include: { photo: true } }, clockOutEvent: { include: { photo: true } }, corrections: { orderBy: { createdAt: "asc" } }, breaks: { select: { minutes: true } } },
     orderBy: [{ workDate: "desc" }, { clockInEvent: { effectiveAt: "desc" } }], take: 500,
   });
-  const rows = sessions.filter((s) => matchesFilter(filter, s.employee.primaryDept, s.department));
+  const rows = sessions.filter((s) => matchesEmp(filter, s.employee, s.department));
   const missing = await prisma.workSession.count({ where: { status: "MISSING_CLOCK_OUT" } });
   const canCorrect = admin.permissions.has("timeclock.correct");
   const canPhotos = admin.permissions.has("photos.view");

@@ -86,6 +86,7 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
               <Field label="E-Mail" name="email" type="email" defaultValue={e.email} />
               <Field label="Position" name="position" defaultValue={e.position} />
               <Field label="Austrittsdatum" name="exitDate" type="date" defaultValue={e.exitDate ? berlinDate(e.exitDate) : ""} />
+              {e.employmentType !== "FESTANGESTELLT" && <Select label="Beschäftigungsart" name="employmentType" options={Object.entries(EMPLOYMENT_LABEL).filter(([k]) => k !== "FESTANGESTELLT")} defaultValue={e.employmentType} />}
               <Select label="Hauptabteilung" name="primaryDeptId" options={main} defaultValue={e.primaryDeptId} />
               <Field label="Abteilungswechsel gültig ab" name="deptValidFrom" type="date" hint="Nur bei Wechsel der Hauptabteilung nötig. Frühere Berichte bleiben bei der alten Abteilung." />
               <Select label="Unterabteilung" name="subDeptId" options={sub} defaultValue={e.subDeptId ?? ""} />

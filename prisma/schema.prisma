@@ -24,7 +24,7 @@ enum DepartmentKind {
 
 model Department {
   id        String         @id @default(uuid()) @db.Uuid
-  key       String         @unique // KUECHE, SERVICE, SUSHI, BAR, LEITUNG, BUERO, SONSTIGE
+  key       String         @unique // KUECHE, SERVICE, SPUELE, BUERO (Hauptbereiche); SUSHI, BAR, LEITUNG, SONSTIGE
   name      String
   kind      DepartmentKind
   parentId  String?        @db.Uuid
@@ -51,6 +51,7 @@ enum EmploymentType {
   KURZFRISTIG
   TEILZEIT_STUNDENLOHN
   SONSTIGE_AUSHILFE
+  EXTERN // über Fremdfirma, nach Stunden bezahlt (z. B. Spülküche)
 }
 
 enum PayModel {
@@ -967,6 +968,9 @@ enum DeptFilter {
   ALL
   KUECHE
   SERVICE
+  SPUELE
+  BUERO
+  AUSHILFEN
 }
 
 model ReportSchedule {

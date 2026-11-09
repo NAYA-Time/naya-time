@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/admin-auth";
 import { closeAll, closeMonth, correctClosing } from "@/lib/admin-actions-closing";
 import { monthBounds, prevMonth, type Decision, type MonthResult } from "@/lib/calc/month";
-import { currentDeptFilter, matchesFilter } from "@/lib/dept";
+import { currentDeptFilter, matchesEmp } from "@/lib/dept";
 import { loadMonth } from "@/lib/month-data";
 import { berlinDate, dbDate, fmtMinutes } from "@/lib/time";
 import { ActionForm, Field } from "@/components/ActionForm";
@@ -28,7 +28,7 @@ export default async function MonatsabschlussPage({ searchParams }: { searchPara
     include: { primaryDept: { include: { parent: true } }, monthlyClosings: { where: { month: dbDate(first) }, orderBy: { version: "desc" } } },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });
-  const visible = emps.filter((e) => matchesFilter(filter, e.primaryDept));
+  const visible = emps.filter((e) => matchesEmp(filter, e));
   const rows = await Promise.all(visible.map(async (e) => {
     const active = e.monthlyClosings.find((c) => c.status === "CLOSED");
     // Live-Rechnung mit der beim Abschluss gewählten Defizit-Behandlung, damit der Vergleich fair ist

@@ -5,7 +5,7 @@ import { audit } from "@/lib/audit";
 import { sickReport } from "@/lib/reports/excel";
 import { saveReport } from "@/lib/reports/store";
 
-const FILTERS = ["ALL", "KUECHE", "SERVICE"] as const;
+import { DEPT_FILTERS as FILTERS } from "@/lib/dept";
 
 /** Krankheitsliste als Excel herunterladen (nach Mitarbeitern sortiert) */
 export async function GET(req: NextRequest) {

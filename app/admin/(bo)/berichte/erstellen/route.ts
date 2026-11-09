@@ -6,7 +6,7 @@ import { mondayOf } from "@/lib/admin-actions-schedule";
 import { monthlyReport, payrollReport, weeklyReport } from "@/lib/reports/excel";
 import { saveReport } from "@/lib/reports/store";
 
-const FILTERS = ["ALL", "KUECHE", "SERVICE"] as const;
+import { DEPT_FILTERS as FILTERS } from "@/lib/dept";
 const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /** Bericht erzeugen, verschlüsselt ablegen und direkt herunterladen */

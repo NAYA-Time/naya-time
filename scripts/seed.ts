@@ -36,15 +36,17 @@ async function main() {
   const depts = [
     { key: "KUECHE", name: "Küche", kind: "MAIN" as const, sortOrder: 1 },
     { key: "SERVICE", name: "Service", kind: "MAIN" as const, sortOrder: 2 },
+    { key: "SPUELE", name: "Spülküche", kind: "MAIN" as const, sortOrder: 3 },
+    { key: "BUERO", name: "Büro", kind: "MAIN" as const, sortOrder: 4 },
   ];
   for (const d of depts) await prisma.department.upsert({ where: { key: d.key }, update: {}, create: d });
   const kueche = await prisma.department.findUniqueOrThrow({ where: { key: "KUECHE" } });
   const service = await prisma.department.findUniqueOrThrow({ where: { key: "SERVICE" } });
+  const buero = await prisma.department.findUniqueOrThrow({ where: { key: "BUERO" } });
   const subs = [
     { key: "SUSHI", name: "Sushi", parentId: kueche.id, sortOrder: 3 },
     { key: "BAR", name: "Bar", parentId: service.id, sortOrder: 4 },
-    { key: "LEITUNG", name: "Restaurantleitung", parentId: null, sortOrder: 5 },
-    { key: "BUERO", name: "Büro", parentId: null, sortOrder: 6 },
+    { key: "LEITUNG", name: "Restaurantleitung", parentId: buero.id, sortOrder: 5 },
     { key: "SONSTIGE", name: "Sonstige", parentId: null, sortOrder: 7 },
   ];
   for (const s of subs) await prisma.department.upsert({ where: { key: s.key }, update: {}, create: { ...s, kind: "SUB" } });

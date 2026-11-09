@@ -272,7 +272,7 @@ export default function Terminal() {
   const now = useServerClock();
   const [screen, setScreen] = useState<Screen>({ k: "loading" });
   const [emps, setEmps] = useState<Emp[]>([]);
-  const [filter, setFilter] = useState<"ALL" | "KUECHE" | "SERVICE">("ALL");
+  const [filter, setFilter] = useState<string>("ALL");
   const idempotency = useRef<string | null>(null);
   const photoRef = useRef<{ blob: Blob | null; reason?: string } | null>(null);
 
@@ -448,13 +448,13 @@ export default function Terminal() {
       const list = emps.filter((e) => filter === "ALL" || e.dept === filter);
       return (
         <Shell onBack={home} title={screen.intent === "IN" ? "Einstempeln" : screen.intent === "OUT" ? "Ausstempeln" : screen.intent === "PLAN" ? "Mein Dienstplan" : "Pause"}>
-          <div className="my-4 flex items-center justify-between gap-4">
+          <div className="my-4 flex flex-wrap items-center justify-between gap-4">
             <h2 className="text-3xl">Wer bist du?</h2>
-            <div className="flex gap-2">
-              {(["ALL", "KUECHE", "SERVICE"] as const).map((f) => (
+            <div className="flex flex-wrap gap-2">
+              {(["ALL", "KUECHE", "SERVICE", "SPUELE", "BUERO"] as const).filter((f) => f === "ALL" || emps.some((e) => e.dept === f)).map((f) => (
                 <button key={f} onClick={() => setFilter(f)}
-                  className={`min-h-14 rounded-xl px-5 text-lg ${filter === f ? "bg-gold text-ink" : "border border-line text-mute"}`}>
-                  {f === "ALL" ? "Alle" : f === "KUECHE" ? "Küche" : "Service"}
+                  className={`min-h-14 whitespace-nowrap rounded-xl px-4 text-lg ${filter === f ? "bg-gold text-ink" : "border border-line text-mute"}`}>
+                  {{ ALL: "Alle", KUECHE: "Küche", SERVICE: "Service", SPUELE: "Spülküche", BUERO: "Büro" }[f]}
                 </button>
               ))}
             </div>

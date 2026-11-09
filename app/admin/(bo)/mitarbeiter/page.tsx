@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/admin-auth";
-import { currentDeptFilter, matchesFilter } from "@/lib/dept";
+import { FILTER_LABEL, currentDeptFilter, matchesEmp } from "@/lib/dept";
 import { EMPLOYMENT_LABEL } from "@/lib/labels";
 import { berlinDate, fmtMinutes } from "@/lib/time";
 import { vacationOverview } from "@/lib/vacation";
@@ -15,7 +15,7 @@ export default async function Employees({ searchParams }: { searchParams: Promis
     include: { primaryDept: { include: { parent: true } }, subDept: true, credential: { select: { pinHash: true, lockedUntil: true } }, contracts: { orderBy: { validFrom: "desc" }, take: 1 }, vacationBalances: { where: { year: Number(berlinDate(new Date()).slice(0, 4)) } } },
     orderBy: [{ lastName: "asc" }],
   });
-  const rows = list.filter((e) => matchesFilter(filter, e.primaryDept, e.subDept));
+  const rows = list.filter((e) => matchesEmp(filter, e));
   const year = Number(berlinDate(new Date()).slice(0, 4));
   const vac = new Map((await vacationOverview(rows, year)).map((v) => [v.id, v]));
   return (
@@ -23,7 +23,7 @@ export default async function Employees({ searchParams }: { searchParams: Promis
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-3xl font-semibold">Mitarbeiter</h1>
-          <p className="text-mute">{rows.length} {inaktiv ? "insgesamt" : "aktiv"}{filter !== "ALL" ? ` · ${filter === "KUECHE" ? "Küche" : "Service"}` : ""}</p>
+          <p className="text-mute">{rows.length} {inaktiv ? "insgesamt" : "aktiv"}{filter !== "ALL" ? ` · ${FILTER_LABEL[filter]}` : ""}</p>
         </div>
         <div className="flex gap-2">
           <Link href={inaktiv ? "/admin/mitarbeiter" : "/admin/mitarbeiter?inaktiv=1"} className="rounded-xl border border-line px-4 py-3 text-mute hover:text-paper">{inaktiv ? "Nur aktive" : "Auch inaktive zeigen"}</Link>

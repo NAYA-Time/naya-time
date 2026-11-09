@@ -1,6 +1,7 @@
 export const EMPLOYMENT_LABEL: Record<string, string> = {
   FESTANGESTELLT: "Festangestellt", MINIJOB: "Minijob", KURZFRISTIG: "Kurzfristige Beschäftigung",
   TEILZEIT_STUNDENLOHN: "Teilzeit auf Stundenlohnbasis", SONSTIGE_AUSHILFE: "Sonstige Aushilfe",
+  EXTERN: "Extern (Fremdfirma, nach Stunden)",
 };
 export const METHOD_LABEL: Record<string, string> = {
   WEEKLY_AVERAGE: "Durchschnitt (Woche × 13 ÷ 3)", CALENDAR_EXACT: "Kalendergenau", FIXED_MONTHLY: "Feste Monatsstunden",

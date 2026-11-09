@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/admin-auth";
 import { preparePayrollAction } from "@/lib/admin-actions-payroll";
 import { loadOpenPayroll } from "@/lib/payroll";
-import { currentDeptFilter, matchesFilter } from "@/lib/dept";
+import { currentDeptFilter, matchesEmp } from "@/lib/dept";
 import { dateDe, euro } from "@/lib/labels";
 import { berlinDate, fmtMinutes } from "@/lib/time";
 import { ActionForm, Field } from "@/components/ActionForm";
@@ -22,7 +22,7 @@ export default async function AushilfenPage({ searchParams }: { searchParams: Pr
     prisma.employee.findMany({ include: { primaryDept: { include: { parent: true } } } }),
   ]);
   const emp = new Map(emps.map((e) => [e.id, e]));
-  const rows = open.filter((o) => matchesFilter(filter, emp.get(o.employeeId)?.primaryDept));
+  const rows = open.filter((o) => matchesEmp(filter, emp.get(o.employeeId)));
   const ready = rows.filter((r) => !r.blockers.length && r.items.length);
   const canManage = admin.permissions.has("payroll.manage");
   const pending = periods.find((p) => p.status === "PREPARED");

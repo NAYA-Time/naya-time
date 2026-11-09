@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { prisma } from "@/lib/db";
 import { logoutAction } from "@/lib/admin-actions-auth";
 import { setDeptFilter } from "@/lib/admin-actions-common";
-import { currentDeptFilter } from "@/lib/dept";
+import { DEPT_FILTERS, FILTER_LABEL, currentDeptFilter } from "@/lib/dept";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Backoffice – NAYA TIME" };
@@ -53,10 +53,10 @@ export default async function BackofficeLayout({ children }: { children: React.R
       </aside>
       <div className="min-w-0">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3 lg:px-8">
-          <form action={setDeptFilter} className="flex gap-1 rounded-xl border border-line p-1">
-            {(["ALL", "KUECHE", "SERVICE"] as const).map((d) => (
-              <button key={d} name="dept" value={d} className={`min-h-10 rounded-lg px-4 text-sm font-semibold tracking-wider ${dept === d ? "bg-gold text-ink" : "text-mute hover:text-paper"}`}>
-                {d === "ALL" ? "ALLE" : d === "KUECHE" ? "KÜCHE" : "SERVICE"}
+          <form action={setDeptFilter} className="flex max-w-full flex-wrap gap-1 rounded-xl border border-line p-1">
+            {DEPT_FILTERS.map((d) => (
+              <button key={d} name="dept" value={d} className={`min-h-10 whitespace-nowrap rounded-lg px-3 text-sm font-semibold tracking-wider ${dept === d ? "bg-gold text-ink" : "text-mute hover:text-paper"}`}>
+                {FILTER_LABEL[d].toUpperCase()}
               </button>
             ))}
           </form>

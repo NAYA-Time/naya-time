@@ -2,13 +2,12 @@ import { amount } from "../calc/payroll";
 // Excel-Berichte (Woche, Monat, Aushilfenlauf). Zeiten als Excel-Zeitwerte ([h]:mm), damit man in Excel weiterrechnen kann.
 import ExcelJS from "exceljs";
 import type { PrismaClient } from "@prisma/client";
-import { matchesFilter, type DeptFilter } from "../dept";
+import { FILTER_LABEL as DEPT_LABEL, matchesEmp, matchesFilter, type DeptFilter } from "../dept";
 import { loadMonth } from "../month-data";
 import { sickCounts } from "../sick";
 import { monthBounds } from "../calc/month";
 import { berlinDate, berlinTime, dbDate } from "../time";
 
-const DEPT_LABEL: Record<DeptFilter, string> = { ALL: "Alle", KUECHE: "Küche", SERVICE: "Service" };
 const ABS_LABEL: Record<string, string> = { VACATION: "Urlaub", SICK: "Krank", SICK_CHILD: "Kind krank", SPECIAL_LEAVE: "Sonderurlaub", UNPAID: "Unbezahlt", TIME_OFF_IN_LIEU: "Freizeitausgleich" };
 const FINDING_LABEL: Record<string, string> = { LATE: "Verspätung", LATE_START: "Verspätung", LATE_END: "Länger als geplant", EARLY_START: "Früher gekommen", NO_SHOW: "Nicht erschienen", OFFLINE_UNTRUSTED: "Offline-Zeit unsicher", OFFLINE_REJECTED: "Offline-Buchung abgelehnt", MISSING_CLOCK_OUT: "Ausstempeln fehlt", BREAK_MISSING: "Pause fehlt", MAX_HOURS: "Höchstarbeitszeit", REST_PERIOD: "Ruhezeit", PHOTO_MISSING: "Foto fehlt", OVERRUN: "Länger als geplant", EARLY: "Früher gekommen" };
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
@@ -37,7 +36,7 @@ async function rangeData(db: PrismaClient, from: string, to: string, filter: Dep
     db.absenceDay.findMany({ where: { date: range, absence: { status: { not: "CANCELLED" } } }, include: { absence: true } }),
     db.complianceFinding.findMany({ where: { workDate: range }, orderBy: { workDate: "asc" } }),
   ]);
-  const visible = emps.filter((e) => matchesFilter(filter, e.primaryDept) || sessions.some((s) => s.employeeId === e.id && matchesFilter(filter, s.department)));
+  const visible = emps.filter((e) => matchesEmp(filter, e) || sessions.some((s) => s.employeeId === e.id && matchesFilter(filter, s.department)));
   const ids = new Set(visible.map((e) => e.id));
   return {
     emps: visible, empById: new Map(emps.map((e) => [e.id, e])),
@@ -177,7 +176,7 @@ export async function sickReport(db: PrismaClient, from: string, to: string, fil
     include: { employee: { include: { primaryDept: { include: { parent: true } } } }, days: true, sickLeave: true },
   });
   const rows = absences
-    .filter((a) => matchesFilter(filter, a.employee.primaryDept))
+    .filter((a) => matchesEmp(filter, a.employee))
     .sort((a, b) => a.employee.lastName.localeCompare(b.employee.lastName, "de") || a.employee.firstName.localeCompare(b.employee.firstName, "de") || a.startDate.getTime() - b.startDate.getTime());
   const wb = new ExcelJS.Workbook();
   meta(wb);

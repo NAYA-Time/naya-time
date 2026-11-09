@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/admin-auth";
 import { cancelAbsence, createAbsence, markVacationReminder } from "@/lib/admin-actions-absences";
-import { currentDeptFilter, matchesFilter } from "@/lib/dept";
+import { DEPT_FILTERS, FILTER_LABEL, currentDeptFilter, matchesEmp } from "@/lib/dept";
 import { dateDe } from "@/lib/labels";
 import { berlinDate, fmtMinutes } from "@/lib/time";
 import { vacationOverview } from "@/lib/vacation";
@@ -25,20 +25,23 @@ export async function AbsencePage({ mode }: { mode: "sick" | "vacation" }) {
       include: { employee: { include: { primaryDept: { include: { parent: true } } } }, days: true, sickLeave: true }, orderBy: { startDate: "desc" },
     }),
   ]);
-  const visible = emps.filter((e) => matchesFilter(filter, e.primaryDept));
-  const rows = absences.filter((a) => matchesFilter(filter, a.employee.primaryDept));
+  const visible = emps.filter((e) => matchesEmp(filter, e));
+  const rows = absences.filter((a) => matchesEmp(filter, a.employee));
   const canManage = admin.permissions.has("absences.manage");
   const recipients = mode === "sick" ? await prisma.emailRecipient.findMany({ where: { active: true }, orderBy: { email: "asc" } }) : [];
 
   // Urlaubskonto je Mitarbeiter für das laufende Jahr
   const vacation = mode === "vacation" ? await vacationOverview(visible, year) : [];
-  const requests = mode === "vacation" ? (await prisma.vacationRequest.findMany({ where: { status: "OPEN" }, include: { employee: { include: { primaryDept: { include: { parent: true } } } } }, orderBy: { startDate: "asc" } })).filter((r) => matchesFilter(filter, r.employee.primaryDept)) : [];
-  const decided = mode === "vacation" ? (await prisma.vacationRequest.findMany({ where: { status: { in: ["APPROVED", "REJECTED", "WITHDRAWN"] }, decidedAt: { gte: new Date(Date.now() - 14 * 86400000) } }, include: { employee: { include: { primaryDept: { include: { parent: true } } } } }, orderBy: { decidedAt: "desc" }, take: 20 })).filter((r) => matchesFilter(filter, r.employee.primaryDept)) : [];
+  const requests = mode === "vacation" ? (await prisma.vacationRequest.findMany({ where: { status: "OPEN" }, include: { employee: { include: { primaryDept: { include: { parent: true } } } } }, orderBy: { startDate: "asc" } })).filter((r) => matchesEmp(filter, r.employee)) : [];
+  const decided = mode === "vacation" ? (await prisma.vacationRequest.findMany({ where: { status: { in: ["APPROVED", "REJECTED", "WITHDRAWN"] }, decidedAt: { gte: new Date(Date.now() - 14 * 86400000) } }, include: { employee: { include: { primaryDept: { include: { parent: true } } } } }, orderBy: { decidedAt: "desc" }, take: 20 })).filter((r) => matchesEmp(filter, r.employee)) : [];
   const restBy = new Map(vacation.map((v) => [v.id, v.rest]));
 
   return (
-    <div className="grid max-w-5xl gap-5">
-      <h1 className="text-3xl font-semibold">{mode === "sick" ? "Krankheit" : "Urlaub"}</h1>
+    <div className="grid max-w-5xl grid-cols-[minmax(0,1fr)] gap-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-3xl font-semibold">{mode === "sick" ? "Krankheit" : "Urlaub"}</h1>
+        {mode === "vacation" && <a href="/admin/urlaub/uebersicht" className="inline-flex min-h-11 items-center rounded-xl border border-gold px-4 font-semibold text-gold hover:bg-slate">Urlaubsübersicht (Monat, Jahr, PDF) →</a>}
+      </div>
       {mode === "sick" && <p className="text-mute">Es werden keine Diagnosen gespeichert. Angerechnet wird der zum Zeitpunkt der Eintragung geplante Dienst; spätere Dienstplanänderungen ändern die Anrechnung nicht.</p>}
       {canManage && (
         <Section title={mode === "sick" ? "Krankmeldung eintragen" : "Abwesenheit eintragen"}>
@@ -114,7 +117,7 @@ export async function AbsencePage({ mode }: { mode: "sick" | "vacation" }) {
           <form action="/admin/krankheit/export" className="grid gap-4 sm:grid-cols-4 sm:items-end">
             <Field label="Von" name="von" type="date" defaultValue={`${year}-01-01`} required />
             <Field label="Bis" name="bis" type="date" defaultValue={berlinDate(new Date())} required />
-            <Select label="Abteilung" name="abteilung" defaultValue={filter} options={[["ALL", "Alle"], ["KUECHE", "Küche"], ["SERVICE", "Service"]]} />
+            <Select label="Abteilung" name="abteilung" defaultValue={filter} options={DEPT_FILTERS.map((f) => [f, FILTER_LABEL[f]])} />
             <button className="min-h-12 rounded-xl bg-gold px-6 font-semibold text-ink">Herunterladen</button>
           </form>
           {admin.permissions.has("reports.email") && (
@@ -125,7 +128,7 @@ export async function AbsencePage({ mode }: { mode: "sick" | "vacation" }) {
                   <div className="grid gap-4 sm:grid-cols-3">
                     <Field label="Von" name="von" type="date" defaultValue={`${year}-01-01`} required />
                     <Field label="Bis" name="bis" type="date" defaultValue={berlinDate(new Date())} required />
-                    <Select label="Abteilung" name="abteilung" defaultValue={filter} options={[["ALL", "Alle"], ["KUECHE", "Küche"], ["SERVICE", "Service"]]} />
+                    <Select label="Abteilung" name="abteilung" defaultValue={filter} options={DEPT_FILTERS.map((f) => [f, FILTER_LABEL[f]])} />
                   </div>
                   <fieldset className="grid gap-1.5 text-sm"><legend className="mb-1 text-mute">Empfänger</legend>
                     {recipients.map((r) => <label key={r.id} className="flex items-center gap-2"><input type="checkbox" name="recipient" value={r.id} className="size-5 accent-gold" />{r.name ? `${r.name} – ` : ""}{r.email}</label>)}

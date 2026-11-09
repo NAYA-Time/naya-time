@@ -11,7 +11,7 @@ import { requireAdmin } from "./admin-auth";
 import { dbDate } from "./time";
 import type { FormState } from "./admin-actions-auth";
 
-const TYPES: EmploymentType[] = ["FESTANGESTELLT", "MINIJOB", "KURZFRISTIG", "TEILZEIT_STUNDENLOHN", "SONSTIGE_AUSHILFE"];
+const TYPES: EmploymentType[] = ["FESTANGESTELLT", "MINIJOB", "KURZFRISTIG", "TEILZEIT_STUNDENLOHN", "SONSTIGE_AUSHILFE", "EXTERN"];
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 const dateOk = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
 
@@ -93,6 +93,12 @@ export async function updateEmployee(_: FormState, fd: FormData): Promise<FormSt
     email: s(fd, "email") || null, position: s(fd, "position") || null, subDeptId: s(fd, "subDeptId") || null,
     exitDate: dateOk(s(fd, "exitDate")) ? dbDate(s(fd, "exitDate")) : null, showOnTerminal: fd.get("showOnTerminal") === "on",
   };
+  // Beschäftigungsart: nur zwischen den Stundenlohn-Arten wechselbar (Festangestellt hat Monatsvertrag/Stundenkonto)
+  const newType = s(fd, "employmentType") as EmploymentType;
+  if (newType && newType !== before.employmentType) {
+    if (!TYPES.includes(newType) || newType === "FESTANGESTELLT" || before.employmentType === "FESTANGESTELLT") return { error: "Zwischen Festangestellt und Stundenlohn bitte über einen neuen Vertrag wechseln – hier nur zwischen den Aushilfs-Arten und Extern." };
+    (data as Record<string, unknown>).employmentType = newType;
+  }
   const newDept = s(fd, "primaryDeptId");
   const deptFrom = s(fd, "deptValidFrom");
   if (newDept !== before.primaryDeptId && !dateOk(deptFrom)) return { error: "Für den Abteilungswechsel bitte „gültig ab“ angeben." };
