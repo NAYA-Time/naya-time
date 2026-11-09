@@ -1,0 +1,47 @@
+#cloud-config
+# NAYA TIME – beim Anlegen des Hetzner-Servers unter „Cloud config“ einfügen (Ubuntu 24.04).
+# Richtet ein: Docker, Firewall (nur SSH/HTTP/HTTPS), automatische Sicherheitsupdates, Schutz gegen Passwort-Raten,
+# einen Lese-Schlüssel für GitHub und die Befehle naya-setup / naya-update.
+package_update: true
+package_upgrade: true
+packages: [docker.io, docker-compose-v2, git, ufw, fail2ban, unattended-upgrades, openssl]
+write_files:
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+  - path: /etc/apt/apt.conf.d/52naya-reboot
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+  - path: /usr/local/bin/naya-update
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      # Neueste Version holen und neu starten (Daten bleiben erhalten)
+      set -e
+      cd /opt/naya-time && git pull --ff-only
+      cd deploy && docker compose up -d --build
+      docker image prune -f
+      echo "NAYA TIME ist aktualisiert."
+  - path: /usr/local/bin/naya-setup
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      # Code von GitHub holen und Ersteinrichtung starten
+      set -e
+      if [ ! -d /opt/naya-time ]; then
+        printf "Dein GitHub-Benutzername: "; read GH
+        git clone "git@github.com:$GH/naya-time.git" /opt/naya-time
+      fi
+      exec sh /opt/naya-time/deploy/server-setup.sh
+runcmd:
+  - ufw default deny incoming
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+  - systemctl enable --now docker fail2ban
+  - ssh-keygen -t ed25519 -N "" -C "naya-time-server" -f /root/.ssh/github_deploy
+  - printf 'Host github.com\n  IdentityFile /root/.ssh/github_deploy\n  StrictHostKeyChecking accept-new\n' >> /root/.ssh/config
+final_message: "NAYA TIME Grundeinrichtung fertig. Jetzt: cat /root/.ssh/github_deploy.pub (bei GitHub als Deploy key eintragen), dann naya-setup"

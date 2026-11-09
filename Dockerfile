@@ -1,13 +1,19 @@
-FROM node:22-alpine
-ENV NODE_ENV=production TZ=Europe/Berlin DATA_DIR=/data
-RUN apk add --no-cache tzdata
+# NAYA TIME – Produktionsimage (Next.js + Prisma). Läuft hinter Caddy (HTTPS), siehe deploy/docker-compose.yml
+FROM node:22-bookworm-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && apt-get clean
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
-COPY src ./src
-COPY public ./public
-RUN mkdir -p /data && chown node:node /data
-USER node
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npx prisma generate && npm run build
+
+FROM node:22-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && apt-get clean
+WORKDIR /app
+ENV NODE_ENV=production STORAGE_DIR=/data/storage PORT=3000
+COPY --from=build /app /app
+RUN useradd -r -u 1001 naya && mkdir -p /data/storage && chown -R naya /data
+USER naya
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:3000/gesund || exit 1
-CMD ["node", "--no-warnings=ExperimentalWarning", "src/server.js"]
+# Datenbank-Migrationen vor dem Start (nur neue, nichts wird zurückgesetzt)
+CMD ["sh", "-c", "npx prisma migrate deploy && npx next start -p 3000"]

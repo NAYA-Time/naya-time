@@ -1,0 +1,63 @@
+# NAYA TIME auf einem eigenen Server (z. B. Hetzner, Standort Deutschland).
+# Start:  cd deploy && docker compose up -d --build
+# Werte stehen in deploy/.env (Vorlage: deploy/.env.example) – diese Datei nie weitergeben.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: naya
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD fehlt}
+      POSTGRES_DB: naya_time
+    volumes: [dbdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U naya -d naya_time"], interval: 10s, retries: 10 }
+
+  app:
+    build: ..
+    restart: unless-stopped
+    depends_on: { db: { condition: service_healthy } }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://naya:${DB_PASSWORD}@db:5432/naya_time
+      STORAGE_DIR: /data/storage
+      APP_URL: https://${DOMAIN}
+    volumes: [storage:/data/storage]
+
+  caddy: # HTTPS-Zertifikat automatisch (Let's Encrypt)
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [app]
+    ports: ["80:80", "443:443"]
+    environment: { DOMAIN: "${DOMAIN}" }
+    volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro, caddydata:/data, caddyconfig:/config]
+
+  cron: # Berichte stündlich, Fotolöschung täglich um ca. 2 Uhr UTC
+    image: curlimages/curl:8.11.1
+    restart: unless-stopped
+    depends_on: [app]
+    environment: { CRON_SECRET: "${CRON_SECRET}" }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          curl -fsS -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/reports || true
+          if [ "$$(date -u +%H)" = "02" ]; then curl -fsS -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/photos || true; fi
+          sleep 3600
+        done
+
+  backup: # tägliche Datenbanksicherung, 30 Tage aufbewahrt (zusätzlich Hetzner-Backup des ganzen Servers)
+    image: postgres:16
+    restart: unless-stopped
+    depends_on: { db: { condition: service_healthy } }
+    environment: { PGPASSWORD: "${DB_PASSWORD}" }
+    volumes: [backups:/backups]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          pg_dump -h db -U naya -Fc naya_time > /backups/naya_time_$$(date +%Y-%m-%d).dump && echo "Sicherung ok"
+          find /backups -name 'naya_time_*.dump' -mtime +30 -delete
+          sleep 86400
+        done
+
+volumes: { dbdata: {}, storage: {}, caddydata: {}, caddyconfig: {}, backups: {} }

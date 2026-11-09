@@ -1,10 +1,17 @@
 {
   "name": "NAYA TIME",
   "short_name": "NAYA TIME",
+  "description": "Zeiterfassung Restaurant NAYA",
   "start_url": "/terminal",
-  "display": "standalone",
-  "orientation": "landscape",
-  "background_color": "#14110f",
-  "theme_color": "#14110f",
-  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#141518",
+  "theme_color": "#141518",
+  "lang": "de",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
 }

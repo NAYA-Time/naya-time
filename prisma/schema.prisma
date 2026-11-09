@@ -1,0 +1,1126 @@
+// NAYA TIME – Datenbankmodell
+// Grundsätze:
+// - Alle Zeitpunkte als timestamptz (UTC). Lokale Kalendertage (Europe/Berlin) als @db.Date.
+// - Alle Dauern als ganze Minuten (Int), alle Geldbeträge als ganze Cent (Int).
+// - Rohbuchungen (TimeClockEvent) sind unveränderlich (DB-Trigger in Migration).
+// - Korrekturen, Abschlüsse, Kontobewegungen sind Append-only mit Verweis auf Vorgänger.
+// - Vertragsdaten sind zeitabhängig (validFrom/validTo), nie überschreiben.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── Stammdaten ─────────────────────────
+
+enum DepartmentKind {
+  MAIN // KÜCHE, SERVICE
+  SUB // Sushi, Bar, Restaurantleitung, Büro, Sonstige
+}
+
+model Department {
+  id        String         @id @default(uuid()) @db.Uuid
+  key       String         @unique // KUECHE, SERVICE, SUSHI, BAR, LEITUNG, BUERO, SONSTIGE
+  name      String
+  kind      DepartmentKind
+  parentId  String?        @db.Uuid
+  parent    Department?    @relation("DeptTree", fields: [parentId], references: [id])
+  children  Department[]   @relation("DeptTree")
+  sortOrder Int            @default(0)
+  active    Boolean        @default(true)
+
+  primaryEmployees    Employee[]                  @relation("PrimaryDept")
+  subEmployees        Employee[]                  @relation("SubDept")
+  extraAssignments    EmployeeDepartment[]
+  shifts              ScheduledShift[]
+  workSessions        WorkSession[]
+  schedules           WorkSchedule[]
+  dailyRevenues       DailyRevenue[]
+  assignmentHistories EmployeeDepartmentHistory[]
+
+  @@map("departments")
+}
+
+enum EmploymentType {
+  FESTANGESTELLT
+  MINIJOB
+  KURZFRISTIG
+  TEILZEIT_STUNDENLOHN
+  SONSTIGE_AUSHILFE
+}
+
+enum PayModel {
+  SALARIED // Festgehalt: nur Stundenkonto
+  HOURLY // Aushilfe: Stundenlohn-Abrechnung
+}
+
+model Employee {
+  id              String         @id @default(uuid()) @db.Uuid
+  personnelNumber String         @unique
+  firstName       String
+  lastName        String
+  displayName     String // Name auf dem Terminal (z. B. "Daniel R.")
+  email           String?        @unique
+  position        String?
+  employmentType  EmploymentType
+  primaryDeptId   String         @db.Uuid
+  primaryDept     Department     @relation("PrimaryDept", fields: [primaryDeptId], references: [id])
+  subDeptId       String?        @db.Uuid
+  subDept         Department?    @relation("SubDept", fields: [subDeptId], references: [id])
+  entryDate       DateTime       @db.Date
+  exitDate        DateTime?      @db.Date
+  active          Boolean        @default(true)
+  showOnTerminal  Boolean        @default(true)
+  createdAt       DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @db.Timestamptz(3)
+
+  credential         EmployeeCredential?
+  pinHistory         PinHistory[]
+  pinEscrow          PinEscrow?
+  portalSettings     PortalVisibility?
+  contracts          EmployeeContract[]
+  overtimeRules      OvertimeRule[]
+  wages              HourlyWageHistory[]
+  extraDepartments   EmployeeDepartment[]
+  departmentHistory  EmployeeDepartmentHistory[]
+  shifts             ScheduledShift[]
+  clockEvents        TimeClockEvent[]
+  workSessions       WorkSession[]
+  correctionRequests CorrectionRequest[]
+  absences           Absence[]
+  vacationBalances   VacationBalance[]
+  account            WorkingTimeAccount?
+  monthlyClosings    MonthlyTimeClosing[]
+  payrollItems       PayrollItem[]
+  payrollSettlements PayrollSettlement[]
+  payments           PaymentRecord[]
+  complianceFindings ComplianceFinding[]
+  portalSessions     Session[]
+  adminUser          AdminUser?
+
+  @@index([primaryDeptId, active])
+  @@map("employees")
+}
+
+// Zusätzliche Abteilungen (Mitarbeiter arbeitet regelmäßig auch in anderer Abteilung)
+model EmployeeDepartment {
+  employeeId   String     @db.Uuid
+  employee     Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  departmentId String     @db.Uuid
+  department   Department @relation(fields: [departmentId], references: [id])
+
+  @@id([employeeId, departmentId])
+  @@map("employee_departments")
+}
+
+// Historie der Hauptabteilung (Abteilungswechsel ändert keine alten Berichte)
+model EmployeeDepartmentHistory {
+  id           String     @id @default(uuid()) @db.Uuid
+  employeeId   String     @db.Uuid
+  employee     Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  departmentId String     @db.Uuid
+  department   Department @relation(fields: [departmentId], references: [id])
+  validFrom    DateTime   @db.Date
+  validTo      DateTime?  @db.Date
+
+  @@index([employeeId, validFrom])
+  @@map("employee_department_history")
+}
+
+enum MonthlyTargetMethod {
+  WEEKLY_AVERAGE // Wochenstunden × 13 / 3 (42:30 → 184:10), jeden Monat gleich
+  CALENDAR_EXACT // Summe der Tagessoll-Werte der Vertragsarbeitstage im konkreten Monat
+  FIXED_MONTHLY // Vertraglich feste Monatsstunden
+}
+
+// Zeitabhängiger Vertrag. Änderungen = neuer Datensatz mit neuem validFrom.
+model EmployeeContract {
+  id                  String              @id @default(uuid()) @db.Uuid
+  employeeId          String              @db.Uuid
+  employee            Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  validFrom           DateTime            @db.Date
+  validTo             DateTime?           @db.Date
+  payModel            PayModel
+  contractModel       String? // Freitext, z. B. "Vollzeit 5-Tage", "Minijob"
+  weeklyMinutes       Int? // 2550 = 42:30
+  monthlyMinutes      Int? // nur bei FIXED_MONTHLY
+  monthlyTargetMethod MonthlyTargetMethod @default(WEEKLY_AVERAGE)
+  workdaysMask        Int                 @default(31) // Bit 0 = Mo … Bit 6 = So
+  workdaysPerWeek     Int                 @default(5) // für Tagessoll/Urlaub bei variablen Tagen
+  vacationDaysPerYear Int                 @default(0) // in halben Tagen ×2 vermeiden: ganze Tage
+  vacationBasisDays   Int                 @default(5) // Urlaubsanspruch bezogen auf x-Tage-Woche
+  accountLimitPlus    Int? // optionale Kontogrenzen in Minuten
+  accountLimitMinus   Int?
+  calcLaborCostCents  Int? // kalkulatorische Personalkosten / Monat (optional)
+  note                String?
+  createdAt           DateTime            @default(now()) @db.Timestamptz(3)
+  createdById         String?             @db.Uuid
+
+  @@index([employeeId, validFrom])
+  @@map("employee_contracts")
+}
+
+// Mit dem Gehalt abgegoltene Überstunden (zeitabhängig)
+model OvertimeRule {
+  id                      String    @id @default(uuid()) @db.Uuid
+  employeeId              String    @db.Uuid
+  employee                Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  validFrom               DateTime  @db.Date
+  validTo                 DateTime? @db.Date
+  includedMinutesPerMonth Int       @default(0) // 600 = 10 Std.
+  contractuallyAgreed     Boolean   @default(false)
+  legallyReviewed         Boolean   @default(false)
+  settlementPeriod        String    @default("CALENDAR_MONTH")
+  note                    String?
+  createdAt               DateTime  @default(now()) @db.Timestamptz(3)
+  createdById             String?   @db.Uuid
+
+  @@index([employeeId, validFrom])
+  @@map("overtime_rules")
+}
+
+model HourlyWageHistory {
+  id           String    @id @default(uuid()) @db.Uuid
+  employeeId   String    @db.Uuid
+  employee     Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  validFrom    DateTime  @db.Date
+  validTo      DateTime? @db.Date
+  centsPerHour Int
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+  createdById  String?   @db.Uuid
+
+  @@index([employeeId, validFrom])
+  @@map("hourly_wage_history")
+}
+
+// ───────────────────────── Zugangsdaten ─────────────────────────
+
+model EmployeeCredential {
+  employeeId         String    @id @db.Uuid
+  employee           Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  pinHash            String? // scrypt, nie Klartext. null = PIN noch nicht festgelegt
+  pinSetAt           DateTime? @db.Timestamptz(3)
+  mustSetPin         Boolean   @default(true) // Ersteinrichtung bzw. nach Rücksetzung
+  setupCodeHash      String? // Einmalcode für Erst-Registrierung am Terminal
+  setupCodeExpiresAt DateTime? @db.Timestamptz(3)
+  failedAttempts     Int       @default(0)
+  lockedUntil        DateTime? @db.Timestamptz(3)
+  portalEnabled      Boolean   @default(false)
+  updatedAt          DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@map("employee_credentials")
+}
+
+// Letzte PINs, um Wiederverwendung im selben Konto zu verhindern
+model PinHistory {
+  id         String   @id @default(uuid()) @db.Uuid
+  employeeId String   @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  pinHash    String
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([employeeId, createdAt])
+  @@map("pin_history")
+}
+
+// Optional (Standard AUS): verschlüsselte PIN-Hinterlegung zur Anzeige für den Inhaber.
+// AES-256-GCM mit separatem Schlüssel; Anzeige nur nach erneuter Anmeldung + 2FA, jede Anzeige im Audit-Log.
+model PinEscrow {
+  employeeId String   @id @db.Uuid
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  ciphertext Bytes
+  iv         Bytes
+  authTag    Bytes
+  keyVersion Int
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("pin_escrow")
+}
+
+// Was der Mitarbeiter im privaten Bereich sehen darf
+model PortalVisibility {
+  employeeId        String   @id @db.Uuid
+  employee          Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  schedule          Boolean  @default(true)
+  weeklyTarget      Boolean  @default(false)
+  weeklyHours       Boolean  @default(false)
+  monthlyHours      Boolean  @default(false)
+  monthlyTarget     Boolean  @default(false)
+  accountBalance    Boolean  @default(false)
+  overtime          Boolean  @default(false)
+  minusHours        Boolean  @default(false)
+  includedOvertime  Boolean  @default(false)
+  vacationRemaining Boolean  @default(false)
+  ownReports        Boolean  @default(false)
+
+  @@map("portal_visibility")
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  key         String           @unique // OWNER, MANAGER, …
+  name        String
+  isSystem    Boolean          @default(false)
+  permissions RolePermission[]
+  admins      AdminUser[]
+
+  @@map("roles")
+}
+
+model Permission {
+  key         String           @id // z. B. "timeclock.correct", "photos.view"
+  description String
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId        String     @db.Uuid
+  role          Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionKey String
+  permission    Permission @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
+
+  @@id([roleId, permissionKey])
+  @@map("role_permissions")
+}
+
+model AdminUser {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique
+  name          String
+  passwordHash  String
+  totpSecretEnc Bytes? // verschlüsselt
+  totpEnabled   Boolean   @default(false)
+  recoveryCodes String[] // nur Hashes
+  extraPermissions String[] @default([]) // zusätzliche Einzelrechte für diese Person (z. B. timeclock.addSession)
+  roleId        String    @db.Uuid
+  role          Role      @relation(fields: [roleId], references: [id])
+  employeeId    String?   @unique @db.Uuid
+  employee      Employee? @relation(fields: [employeeId], references: [id])
+  active        Boolean   @default(true)
+  failedLogins  Int       @default(0)
+  lockedUntil   DateTime? @db.Timestamptz(3)
+  lastLoginAt   DateTime? @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+
+  sessions Session[]
+
+  @@map("admin_users")
+}
+
+enum SessionKind {
+  ADMIN
+  PORTAL
+}
+
+model Session {
+  id          String      @id @default(uuid()) @db.Uuid
+  kind        SessionKind
+  tokenHash   String      @unique // SHA-256 des Cookie-Tokens
+  adminUserId String?     @db.Uuid
+  adminUser   AdminUser?  @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  employeeId  String?     @db.Uuid
+  employee    Employee?   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  mfaPassed   Boolean     @default(false)
+  reauthAt    DateTime?   @db.Timestamptz(3) // für sensible Aktionen (Fotos, PIN-Anzeige)
+  createdAt   DateTime    @default(now()) @db.Timestamptz(3)
+  expiresAt   DateTime    @db.Timestamptz(3)
+  ip          String?
+  userAgent   String?
+
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// Gekoppelte Terminal-Geräte (iPad). Nur gekoppelte Geräte dürfen stempeln.
+model TerminalDevice {
+  id          String           @id @default(uuid()) @db.Uuid
+  name        String
+  tokenHash   String           @unique
+  active      Boolean          @default(true)
+  pairedAt    DateTime         @default(now()) @db.Timestamptz(3)
+  pairedById  String?          @db.Uuid
+  lastSeenAt  DateTime?        @db.Timestamptz(3)
+  clockEvents TimeClockEvent[]
+
+  @@map("terminal_devices")
+}
+
+// ───────────────────────── Dienstplan ─────────────────────────
+
+enum ScheduleStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model WorkSchedule {
+  id               String            @id @default(uuid()) @db.Uuid
+  periodStart      DateTime          @db.Date // Montag
+  periodEnd        DateTime          @db.Date // Sonntag (oder Monatsende)
+  departmentId     String?           @db.Uuid // null = Gesamtbetrieb
+  department       Department?       @relation(fields: [departmentId], references: [id])
+  status           ScheduleStatus    @default(DRAFT)
+  currentVersionNo Int               @default(0)
+  createdAt        DateTime          @default(now()) @db.Timestamptz(3)
+  createdById      String?           @db.Uuid
+  shifts           ScheduledShift[]
+  versions         ScheduleVersion[]
+
+  @@index([periodStart])
+  @@map("work_schedules")
+}
+
+// Jede Veröffentlichung friert den Plan als Snapshot ein (Historie, Nachweis).
+model ScheduleVersion {
+  id            String       @id @default(uuid()) @db.Uuid
+  scheduleId    String       @db.Uuid
+  schedule      WorkSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  versionNo     Int
+  snapshot      Json // alle Schichten zum Zeitpunkt der Veröffentlichung
+  publishedAt   DateTime     @default(now()) @db.Timestamptz(3)
+  publishedById String?      @db.Uuid
+  changeNote    String?
+
+  @@unique([scheduleId, versionNo])
+  @@map("schedule_versions")
+}
+
+enum ShiftKind {
+  WORK
+  FREE
+}
+
+model ScheduledShift {
+  id                  String       @id @default(uuid()) @db.Uuid
+  scheduleId          String       @db.Uuid
+  schedule            WorkSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  employeeId          String       @db.Uuid
+  employee            Employee     @relation(fields: [employeeId], references: [id])
+  departmentId        String       @db.Uuid // abweichende Abteilung für einzelne Schicht möglich
+  department          Department   @relation(fields: [departmentId], references: [id])
+  workDate            DateTime     @db.Date // lokaler Kalendertag des Dienstbeginns
+  kind                ShiftKind    @default(WORK)
+  startAt             DateTime?    @db.Timestamptz(3)
+  endAt               DateTime?    @db.Timestamptz(3) // darf nach Mitternacht liegen
+  plannedBreakMinutes Int          @default(0)
+  note                String?
+  deletedAt           DateTime?    @db.Timestamptz(3) // weiches Löschen, Historie bleibt
+  createdAt           DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime     @updatedAt @db.Timestamptz(3)
+
+  workSessions WorkSession[]
+  clockEvents  TimeClockEvent[]
+
+  @@index([employeeId, workDate])
+  @@index([workDate, departmentId])
+  @@map("scheduled_shifts")
+}
+
+model ShiftTemplate {
+  id                  String  @id @default(uuid()) @db.Uuid
+  name                String // "Spät Küche"
+  startTime           String // "13:30"
+  endTime             String // "22:00"
+  plannedBreakMinutes Int     @default(30)
+  departmentId        String? @db.Uuid
+
+  @@map("shift_templates")
+}
+
+// ───────────────────────── Zeiterfassung ─────────────────────────
+
+enum ClockEventType {
+  CLOCK_IN
+  CLOCK_OUT
+  BREAK_START
+  BREAK_END
+}
+
+enum PhotoStatus {
+  CAPTURED
+  MISSING_TECHNICAL // "Foto fehlt – technische Ausnahme"
+  FEATURE_DISABLED // Fotofunktion nicht freigegeben/aktiv
+}
+
+// UNVERÄNDERLICHE Rohbuchung. UPDATE/DELETE per DB-Trigger gesperrt.
+model TimeClockEvent {
+  id                 String           @id @default(uuid()) @db.Uuid
+  bookingNo          BigInt           @unique @default(autoincrement()) // fortlaufende Buchungsnummer
+  idempotencyKey     String           @unique // vom Terminal erzeugt, verhindert Doppelbuchung
+  employeeId         String           @db.Uuid
+  employee           Employee         @relation(fields: [employeeId], references: [id])
+  terminalId         String           @db.Uuid
+  terminal           TerminalDevice   @relation(fields: [terminalId], references: [id])
+  type               ClockEventType
+  serverReceivedAt   DateTime         @default(now()) @db.Timestamptz(3) // maßgeblich bei Online-Buchung
+  effectiveAt        DateTime         @db.Timestamptz(3) // = serverReceivedAt, bei Offline: vertrauenswürdig rekonstruiert
+  isOffline          Boolean          @default(false)
+  clientRecordedAt   DateTime?        @db.Timestamptz(3) // iPad-Uhr (nur Info)
+  offlineEvidence    Json? // letzte Serverzeit-Sync + monotone Uhr-Differenz
+  offlineTrust       String? // TRUSTED | UNTRUSTED (Uhr manipuliert/Neustart) → Prüfung
+  photoStatus        PhotoStatus
+  photoMissingReason String?
+  scheduledShiftId   String?          @db.Uuid
+  scheduledShift     ScheduledShift?  @relation(fields: [scheduledShiftId], references: [id])
+  photo              ClockEventPhoto?
+
+  sessionAsIn  WorkSession?  @relation("SessionIn")
+  sessionAsOut WorkSession?  @relation("SessionOut")
+  breakStarts  BreakRecord[] @relation("BreakStart")
+  breakEnds    BreakRecord[] @relation("BreakEnd")
+
+  @@index([employeeId, effectiveAt])
+  @@map("time_clock_events")
+}
+
+// Foto zu genau einer Buchung. Bild AES-256-GCM-verschlüsselt im privaten Objektspeicher.
+model ClockEventPhoto {
+  id           String         @id @default(uuid()) @db.Uuid
+  clockEventId String         @unique @db.Uuid
+  clockEvent   TimeClockEvent @relation(fields: [clockEventId], references: [id])
+  storageKey   String         @unique
+  iv           Bytes
+  authTag      Bytes
+  keyVersion   Int
+  sha256       String // Prüfsumme des Klartext-Bildes (Integrität)
+  mimeType     String
+  byteSize     Int
+  capturedAt   DateTime       @db.Timestamptz(3)
+  deleteAfter  DateTime       @db.Timestamptz(3) // aus Löschfrist berechnet
+  deletedAt    DateTime?      @db.Timestamptz(3)
+
+  @@index([deleteAfter])
+  @@map("clock_event_photos")
+}
+
+enum SessionStatus {
+  OPEN // eingestempelt
+  CLOSED
+  MISSING_CLOCK_OUT // Ausstempeln vergessen → Prüfung
+}
+
+enum BreakConfirmation {
+  NOT_ASKED
+  YES
+  NO
+}
+
+// Abgeleitete Arbeitsschicht (aus Rohbuchungen + Korrekturen berechnet). Wird neu berechnet, nie Quelle der Wahrheit.
+model WorkSession {
+  id                  String            @id @default(uuid()) @db.Uuid
+  employeeId          String            @db.Uuid
+  employee            Employee          @relation(fields: [employeeId], references: [id])
+  departmentId        String            @db.Uuid
+  department          Department        @relation(fields: [departmentId], references: [id])
+  workDate            DateTime          @db.Date // lokaler Tag des Beginns (Nachtschicht bleibt am Starttag)
+  scheduledShiftId    String?           @db.Uuid
+  scheduledShift      ScheduledShift?   @relation(fields: [scheduledShiftId], references: [id])
+  clockInEventId      String?           @unique @db.Uuid // leer = komplett nachgetragene Schicht (siehe TimeCorrection ADD_SESSION)
+  clockInEvent        TimeClockEvent?   @relation("SessionIn", fields: [clockInEventId], references: [id], onDelete: Restrict)
+  clockOutEventId     String?           @unique @db.Uuid
+  clockOutEvent       TimeClockEvent?   @relation("SessionOut", fields: [clockOutEventId], references: [id])
+  status              SessionStatus     @default(OPEN)
+  breakConfirmation   BreakConfirmation @default(NOT_ASKED)
+  earlyStartApproved  Boolean           @default(false) // aus genehmigter Korrekturanfrage
+  // Berechnungsergebnis (Cache, deterministisch aus Daten reproduzierbar)
+  plannedStartAt      DateTime?         @db.Timestamptz(3)
+  plannedEndAt        DateTime?         @db.Timestamptz(3)
+  effectiveStartAt    DateTime?         @db.Timestamptz(3)
+  effectiveEndAt      DateTime?         @db.Timestamptz(3)
+  presenceMinutes     Int               @default(0)
+  breakMinutes        Int               @default(0)
+  workedMinutes       Int               @default(0) // tatsächliche Arbeitszeit
+  payableMinutes      Int               @default(0) // vergütungsrelevant
+  lateMinutes         Int               @default(0)
+  earlyArrivalMinutes Int               @default(0)
+  overrunMinutes      Int               @default(0) // nach geplantem Ende
+  calcVersion         Int               @default(1)
+  computedAt          DateTime?         @db.Timestamptz(3)
+
+  breaks       BreakRecord[]
+  corrections  TimeCorrection[]
+  requests     CorrectionRequest[]
+  payrollItems PayrollItem[]
+
+  @@index([employeeId, workDate])
+  @@index([workDate, status])
+  @@map("work_sessions")
+}
+
+enum BreakSource {
+  CLOCKED // per Pause-Buchung am Terminal
+  CONFIRMED_AT_CLOCKOUT // Mitarbeiter bestätigt beim Ausstempeln: Pause genommen
+  ADMIN_CORRECTION
+}
+
+model BreakRecord {
+  id            String          @id @default(uuid()) @db.Uuid
+  workSessionId String          @db.Uuid
+  workSession   WorkSession     @relation(fields: [workSessionId], references: [id], onDelete: Cascade)
+  source        BreakSource
+  startEventId  String?         @db.Uuid
+  startEvent    TimeClockEvent? @relation("BreakStart", fields: [startEventId], references: [id])
+  endEventId    String?         @db.Uuid
+  endEvent      TimeClockEvent? @relation("BreakEnd", fields: [endEventId], references: [id])
+  startAt       DateTime?       @db.Timestamptz(3)
+  endAt         DateTime?       @db.Timestamptz(3)
+  minutes       Int
+  createdAt     DateTime        @default(now()) @db.Timestamptz(3)
+
+  @@map("break_records")
+}
+
+enum CorrectionField {
+  CLOCK_IN
+  CLOCK_OUT
+  BREAK_MINUTES
+  PAYABLE_START // z. B. genehmigter früherer Arbeitsbeginn
+  SESSION_VOID // Fehlbuchung neutralisieren (Original bleibt)
+  ADD_SESSION // vergessene Buchung nachtragen
+}
+
+// Append-only. Jede Korrektur ist ein neuer Datensatz; letzte gültige gewinnt.
+model TimeCorrection {
+  id             String          @id @default(uuid()) @db.Uuid
+  workSessionId  String          @db.Uuid
+  workSession    WorkSession     @relation(fields: [workSessionId], references: [id])
+  field          CorrectionField
+  originalValue  String? // ISO-Zeit oder Minuten, wie zum Zeitpunkt der Korrektur
+  correctedValue String
+  reason         String
+  createdById    String          @db.Uuid
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+  supersedesId   String?         @unique @db.Uuid
+  supersedes     TimeCorrection? @relation("CorrectionChain", fields: [supersedesId], references: [id])
+  supersededBy   TimeCorrection? @relation("CorrectionChain")
+  requestId      String?         @db.Uuid
+
+  @@index([workSessionId])
+  @@map("time_corrections")
+}
+
+enum RequestType {
+  EARLY_START_WORKED // "Ich habe vor Dienstbeginn gearbeitet"
+  FORGOT_CLOCK_OUT
+  FORGOT_CLOCK_IN
+  BREAK_NOT_TAKEN
+  OTHER
+}
+
+enum RequestStatus {
+  OPEN
+  APPROVED
+  REJECTED
+}
+
+model CorrectionRequest {
+  id             String        @id @default(uuid()) @db.Uuid
+  employeeId     String        @db.Uuid
+  employee       Employee      @relation(fields: [employeeId], references: [id])
+  workSessionId  String?       @db.Uuid
+  workSession    WorkSession?  @relation(fields: [workSessionId], references: [id])
+  type           RequestType
+  requestedValue String?
+  message        String?
+  createdByKind  String // EMPLOYEE | MANAGER
+  createdById    String?       @db.Uuid
+  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
+  status         RequestStatus @default(OPEN)
+  decidedById    String?       @db.Uuid
+  decidedAt      DateTime?     @db.Timestamptz(3)
+  decisionNote   String?
+
+  @@index([status, createdAt])
+  @@map("correction_requests")
+}
+
+// ───────────────────────── Abwesenheiten ─────────────────────────
+
+enum AbsenceType {
+  VACATION
+  SICK
+  SICK_CHILD
+  SPECIAL_LEAVE // Sonderurlaub
+  UNPAID
+  TIME_OFF_IN_LIEU // Freizeitausgleich (Stundenkonto)
+}
+
+enum AbsenceStatus {
+  PLANNED
+  CONFIRMED
+  CANCELLED
+}
+
+model Absence {
+  id          String        @id @default(uuid()) @db.Uuid
+  employeeId  String        @db.Uuid
+  employee    Employee      @relation(fields: [employeeId], references: [id])
+  type        AbsenceType
+  startDate   DateTime      @db.Date
+  endDate     DateTime      @db.Date
+  status      AbsenceStatus @default(CONFIRMED)
+  note        String? // KEINE Diagnosen
+  createdById String        @db.Uuid
+  createdAt   DateTime      @default(now()) @db.Timestamptz(3)
+  cancelledAt DateTime?     @db.Timestamptz(3)
+
+  days      AbsenceDay[]
+  sickLeave SickLeaveRecord?
+
+  @@index([employeeId, startDate])
+  @@map("absences")
+}
+
+enum CreditBasis {
+  SCHEDULE_SNAPSHOT // geplante Schicht zum Zeitpunkt der Eintragung (Lohnausfallprinzip)
+  CONTRACT_DAILY_AVG // Tagessoll aus Vertrag (kein Dienst geplant)
+  NONE // kein Arbeitstag → 0
+  MANUAL
+}
+
+// Tagesweise Anrechnung, beim Eintragen eingefroren (spätere Dienstplanänderungen wirken nicht zurück)
+model AbsenceDay {
+  id               String      @id @default(uuid()) @db.Uuid
+  absenceId        String      @db.Uuid
+  absence          Absence     @relation(fields: [absenceId], references: [id], onDelete: Cascade)
+  date             DateTime    @db.Date
+  creditedMinutes  Int
+  vacationDayValue Int         @default(0) // 2 = ganzer Urlaubstag, 1 = halber
+  basis            CreditBasis
+  shiftSnapshot    Json? // geplante Schicht(en) zum Zeitpunkt der Eintragung
+  manualReason     String?
+
+  payrollItems PayrollItem[]
+
+  @@unique([absenceId, date])
+  @@index([date])
+  @@map("absence_days")
+}
+
+model SickLeaveRecord {
+  absenceId         String    @id @db.Uuid
+  absence           Absence   @relation(fields: [absenceId], references: [id], onDelete: Cascade)
+  certificateStatus String    @default("UNKNOWN") // eAU abgerufen / vorgelegt / nicht erforderlich / ausstehend
+  continuedPayUntil DateTime? @db.Date // Ende Entgeltfortzahlung (6 Wochen) – Prüfhinweis
+  note              String?
+
+  @@map("sick_leave_records")
+}
+
+model VacationBalance {
+  id                   String    @id @default(uuid()) @db.Uuid
+  employeeId           String    @db.Uuid
+  employee             Employee  @relation(fields: [employeeId], references: [id])
+  year                 Int
+  entitlementHalfDays  Int // anteilig bei Ein-/Austritt, in halben Tagen
+  carryOverHalfDays    Int       @default(0)
+  carryOverExpiresAt   DateTime? @db.Date
+  manualAdjustHalfDays Int       @default(0)
+  adjustReason         String?
+  updatedAt            DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@unique([employeeId, year])
+  @@map("vacation_balances")
+}
+
+model PublicHoliday {
+  date   DateTime @id @db.Date
+  name   String
+  region String   @default("HH")
+
+  @@map("public_holidays")
+}
+
+// ───────────────────────── Arbeitszeitkonto ─────────────────────────
+
+model WorkingTimeAccount {
+  id           String                   @id @default(uuid()) @db.Uuid
+  employeeId   String                   @unique @db.Uuid
+  employee     Employee                 @relation(fields: [employeeId], references: [id])
+  openedAt     DateTime                 @db.Date
+  transactions WorkingTimeTransaction[]
+
+  @@map("working_time_accounts")
+}
+
+enum AccountTxType {
+  OPENING_BALANCE
+  MONTH_CLOSING // Ergebnis eines Monatsabschlusses
+  CLOSING_CORRECTION // Delta nach Korrektur eines abgeschlossenen Monats
+  PAYOUT // Überstunden ausgezahlt
+  TIME_OFF // Freizeitausgleich
+  MANUAL_CORRECTION
+}
+
+// Append-only Kontobewegungen. Kontostand = Summe.
+model WorkingTimeTransaction {
+  id          String              @id @default(uuid()) @db.Uuid
+  accountId   String              @db.Uuid
+  account     WorkingTimeAccount  @relation(fields: [accountId], references: [id])
+  bookingDate DateTime            @db.Date
+  type        AccountTxType
+  minutes     Int // signed
+  closingId   String?             @db.Uuid
+  closing     MonthlyTimeClosing? @relation(fields: [closingId], references: [id])
+  reason      String?
+  createdById String?             @db.Uuid
+  createdAt   DateTime            @default(now()) @db.Timestamptz(3)
+  payments    PaymentRecord[]
+
+  @@index([accountId, bookingDate])
+  @@map("working_time_transactions")
+}
+
+enum ClosingStatus {
+  DRAFT
+  CLOSED
+  SUPERSEDED // durch korrigierte Version ersetzt
+}
+
+enum DeficitDecision {
+  NONE // kein Defizit
+  PENDING // optional: Inhaber prüft Ursache
+  AUTO_BOOKED // Standard (Gunnar 08.11.2026): Defizit wird automatisch als Minusstunden übertragen
+  EMPLOYEE_CAUSED // wird als Minusstunden gebucht
+  EMPLOYER_CAUSED // z. B. Unterplanung → keine Minusstunden
+}
+
+// Monatsabschluss Festangestellte (NICHT verwechseln mit Aushilfen-Abrechnung)
+model MonthlyTimeClosing {
+  id                      String                   @id @default(uuid()) @db.Uuid
+  employeeId              String                   @db.Uuid
+  employee                Employee                 @relation(fields: [employeeId], references: [id])
+  month                   DateTime                 @db.Date // 1. des Monats
+  version                 Int                      @default(1)
+  status                  ClosingStatus            @default(DRAFT)
+  targetMinutes           Int
+  avgContractMinutes      Int // rechnerischer Monatsdurchschnitt (Info)
+  workedMinutes           Int
+  sickCreditMinutes       Int
+  vacationCreditMinutes   Int
+  holidayCreditMinutes    Int
+  otherCreditMinutes      Int
+  plannedMinutes          Int // Dienstplan-Summe (Unterplanungsprüfung)
+  overtimeMinutes         Int // rechnerische Mehrarbeit (dokumentiert, nie gelöscht)
+  includedOvertimeMinutes Int // davon abgegolten
+  compensableMinutes      Int // zusätzlich auszugleichen
+  deficitMinutes          Int // rechnerisches Defizit
+  deficitDecision         DeficitDecision          @default(NONE)
+  minusMinutesBooked      Int // tatsächlich als Minusstunden gebucht
+  accountChangeMinutes    Int
+  balanceBeforeMinutes    Int
+  balanceAfterMinutes     Int
+  ruleSnapshot            Json // Vertrag + Abgeltungsregel zum Abschluss
+  closedById              String?                  @db.Uuid
+  closedAt                DateTime?                @db.Timestamptz(3)
+  supersedesId            String?                  @unique @db.Uuid
+  supersedes              MonthlyTimeClosing?      @relation("ClosingChain", fields: [supersedesId], references: [id])
+  supersededBy            MonthlyTimeClosing?      @relation("ClosingChain")
+  correctionReason        String?
+  transactions            WorkingTimeTransaction[]
+
+  @@unique([employeeId, month, version])
+  @@map("monthly_time_closings")
+}
+
+// ───────────────────────── Aushilfen-Abrechnung ─────────────────────────
+
+enum PayrollPeriodStatus {
+  PREPARED
+  SETTLED
+  CANCELLED
+}
+
+// Ein Abrechnungslauf mit frei gewähltem Stichtag (z. B. 25.11.2026)
+model PayrollPeriod {
+  id          String              @id @default(uuid()) @db.Uuid
+  cutoffDate  DateTime            @db.Date // einschließlich
+  label       String // "Aushilfen November 2026"
+  status      PayrollPeriodStatus @default(PREPARED)
+  createdById String              @db.Uuid
+  createdAt   DateTime            @default(now()) @db.Timestamptz(3)
+  settledAt   DateTime?           @db.Timestamptz(3)
+  settledById String?             @db.Uuid
+  settlements PayrollSettlement[]
+  items       PayrollItem[]
+
+  @@map("payroll_periods")
+}
+
+enum PayrollItemKind {
+  WORK // aus WorkSession
+  PAID_ABSENCE // Urlaub/Krankheit/Feiertag mit Vergütung
+  ADJUSTMENT // Differenz nach Korrektur bereits abgerechneter Stunden
+}
+
+// Abgerechnete Minuten je Quelle. Offene Minuten = vergütungsrelevant − Summe abgerechnet.
+// So kann nichts doppelt abgerechnet werden; Korrekturen erzeugen ±-Differenzen.
+model PayrollItem {
+  id            String            @id @default(uuid()) @db.Uuid
+  periodId      String            @db.Uuid
+  period        PayrollPeriod     @relation(fields: [periodId], references: [id])
+  settlementId  String            @db.Uuid
+  settlement    PayrollSettlement @relation(fields: [settlementId], references: [id])
+  employeeId    String            @db.Uuid
+  employee      Employee          @relation(fields: [employeeId], references: [id])
+  kind          PayrollItemKind
+  workSessionId String?           @db.Uuid
+  workSession   WorkSession?      @relation(fields: [workSessionId], references: [id])
+  absenceDayId  String?           @db.Uuid
+  absenceDay    AbsenceDay?       @relation(fields: [absenceDayId], references: [id])
+  workDate      DateTime          @db.Date // Zuordnung zum tatsächlichen Arbeitsmonat
+  minutes       Int
+  centsPerHour  Int
+  amountCents   Int
+  isCarryOver   Boolean           @default(false) // aus Vormonat übertragen
+
+  @@index([workSessionId])
+  @@index([absenceDayId])
+  @@index([employeeId, workDate])
+  @@map("payroll_items")
+}
+
+enum SettlementStatus {
+  NOT_SETTLED // Noch nicht abgerechnet
+  PREPARED // Abrechnung vorbereitet
+  SETTLED // Abgerechnet
+  PAYMENT_SCHEDULED // Auszahlung vorgemerkt
+  PARTIALLY_PAID
+  PAID
+  NEEDS_CORRECTION
+}
+
+model PayrollSettlement {
+  id         String           @id @default(uuid()) @db.Uuid
+  periodId   String           @db.Uuid
+  period     PayrollPeriod    @relation(fields: [periodId], references: [id])
+  employeeId String           @db.Uuid
+  employee   Employee         @relation(fields: [employeeId], references: [id])
+  minutes    Int
+  grossCents Int
+  status     SettlementStatus @default(PREPARED)
+  note       String?
+  items      PayrollItem[]
+  payments   PaymentRecord[]
+
+  @@unique([periodId, employeeId])
+  @@map("payroll_settlements")
+}
+
+// Zahlungen getrennt von Stunden. Auch für Überstunden-Auszahlungen Festangestellter.
+model PaymentRecord {
+  id           String                  @id @default(uuid()) @db.Uuid
+  employeeId   String                  @db.Uuid
+  employee     Employee                @relation(fields: [employeeId], references: [id])
+  settlementId String?                 @db.Uuid
+  settlement   PayrollSettlement?      @relation(fields: [settlementId], references: [id])
+  accountTxId  String?                 @db.Uuid
+  accountTx    WorkingTimeTransaction? @relation(fields: [accountTxId], references: [id])
+  amountCents  Int
+  paidOn       DateTime                @db.Date
+  reference    String?
+  note         String?
+  createdById  String                  @db.Uuid
+  createdAt    DateTime                @default(now()) @db.Timestamptz(3)
+  reversedById String?                 @db.Uuid // Storno statt Löschen
+
+  @@index([employeeId, paidOn])
+  @@map("payment_records")
+}
+
+// ───────────────────────── Berichte & E-Mail ─────────────────────────
+
+model EmailRecipient {
+  id        String                    @id @default(uuid()) @db.Uuid
+  email     String                    @unique
+  name      String?
+  active    Boolean                   @default(true)
+  createdAt DateTime                  @default(now()) @db.Timestamptz(3)
+  schedules ReportScheduleRecipient[]
+
+  @@map("email_recipients")
+}
+
+enum ReportType {
+  WEEKLY
+  MONTHLY
+  PAYROLL_HOURLY
+}
+
+enum DeptFilter {
+  ALL
+  KUECHE
+  SERVICE
+}
+
+model ReportSchedule {
+  id         String                    @id @default(uuid()) @db.Uuid
+  name       String
+  reportType ReportType
+  deptFilter DeptFilter                @default(ALL)
+  individual Boolean                   @default(false) // Einzelberichte je Mitarbeiter zusätzlich
+  dayOfWeek  Int? // 1 = Montag (Wochenbericht)
+  dayOfMonth Int? // Monatsbericht, oder null = nach Monatsabschluss
+  timeOfDay  String                    @default("08:00") // Europe/Berlin
+  enabled    Boolean                   @default(true)
+  lastRunAt  DateTime?                 @db.Timestamptz(3)
+  nextRunAt  DateTime?                 @db.Timestamptz(3)
+  recipients ReportScheduleRecipient[]
+  reports    GeneratedReport[]
+
+  @@map("report_schedules")
+}
+
+model ReportScheduleRecipient {
+  scheduleId  String         @db.Uuid
+  schedule    ReportSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  recipientId String         @db.Uuid
+  recipient   EmailRecipient @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@id([scheduleId, recipientId])
+  @@map("report_schedule_recipients")
+}
+
+model GeneratedReport {
+  id          String             @id @default(uuid()) @db.Uuid
+  reportType  ReportType
+  deptFilter  DeptFilter
+  periodStart DateTime           @db.Date
+  periodEnd   DateTime           @db.Date
+  fileName    String
+  storageKey  String
+  sha256      String
+  byteSize    Int
+  scheduleId  String?            @db.Uuid
+  schedule    ReportSchedule?    @relation(fields: [scheduleId], references: [id])
+  createdById String?            @db.Uuid // null = automatisch
+  createdAt   DateTime           @default(now()) @db.Timestamptz(3)
+  deliveries  EmailDeliveryLog[]
+
+  @@index([reportType, periodStart])
+  @@map("generated_reports")
+}
+
+model EmailDeliveryLog {
+  id         String          @id @default(uuid()) @db.Uuid
+  reportId   String          @db.Uuid
+  report     GeneratedReport @relation(fields: [reportId], references: [id])
+  recipient  String
+  status     String // SENT | FAILED
+  providerId String?
+  error      String?
+  sentAt     DateTime        @default(now()) @db.Timestamptz(3)
+
+  @@map("email_delivery_logs")
+}
+
+// ───────────────────────── Compliance, Audit, Einstellungen ─────────────────────────
+
+enum FindingSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum FindingStatus {
+  OPEN
+  REVIEWED
+  DISMISSED
+}
+
+// Prüfhinweise (keine Vorwürfe): Verspätung, fehlende Pause, >10 h, Ruhezeit < 11 h, Foto fehlt …
+model ComplianceFinding {
+  id           String          @id @default(uuid()) @db.Uuid
+  code         String // LATE, NO_SHOW, MISSING_CLOCK_OUT, BREAK_MISSING, MAX_HOURS, REST_PERIOD, PHOTO_MISSING, OFFLINE_UNTRUSTED, …
+  isLegal      Boolean // gesetzliche Vorgabe (true) vs. betriebliche Regel (false)
+  severity     FindingSeverity
+  employeeId   String          @db.Uuid
+  employee     Employee        @relation(fields: [employeeId], references: [id])
+  workDate     DateTime        @db.Date
+  refType      String?
+  refId        String?
+  message      String
+  details      Json?
+  status       FindingStatus   @default(OPEN)
+  reviewedById String?         @db.Uuid
+  reviewedAt   DateTime?       @db.Timestamptz(3)
+  reviewNote   String?
+  createdAt    DateTime        @default(now()) @db.Timestamptz(3)
+
+  @@unique([code, employeeId, workDate, refId])
+  @@index([status, workDate])
+  @@map("compliance_findings")
+}
+
+// Fälschungserkennbares Änderungsprotokoll (Hash-Kette). UPDATE/DELETE per Trigger gesperrt.
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  at         DateTime @default(now()) @db.Timestamptz(3)
+  actorKind  String // ADMIN | EMPLOYEE | TERMINAL | SYSTEM
+  actorId    String?
+  action     String // z. B. TIMECORRECTION_CREATE, PHOTO_VIEW, PIN_RESET, CLOSING_CLOSE
+  entityType String
+  entityId   String?
+  employeeId String?  @db.Uuid // betroffener Mitarbeiter
+  before     Json?
+  after      Json?
+  reason     String?
+  ip         String?
+  prevHash   String?
+  hash       String
+
+  @@index([entityType, entityId])
+  @@index([employeeId, at])
+  @@map("audit_logs")
+}
+
+// Datenschutz-Freigabe der Fotofunktion (DSFA, Betriebsvereinbarung/Information, Löschfrist)
+model DataProtectionApproval {
+  id            String    @id @default(uuid()) @db.Uuid
+  feature       String // PHOTO_CAPTURE
+  status        String // DRAFT | APPROVED | REVOKED
+  purpose       String
+  legalBasis    String
+  retentionDays Int
+  documentRef   String? // Ablageort DSFA / Information der Mitarbeiter
+  approvedById  String?   @db.Uuid
+  approvedAt    DateTime? @db.Timestamptz(3)
+  revokedAt     DateTime? @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@map("data_protection_approvals")
+}
+
+model DailyRevenue {
+  id           String      @id @default(uuid()) @db.Uuid
+  date         DateTime    @db.Date
+  departmentId String?     @db.Uuid
+  department   Department? @relation(fields: [departmentId], references: [id])
+  amountCents  Int
+  createdById  String      @db.Uuid
+
+  @@unique([date, departmentId])
+  @@map("daily_revenues")
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  updatedById String?  @db.Uuid
+
+  @@map("system_settings")
+}
+
+model RateLimitBucket {
+  key     String   @id // z. B. "pin:<employeeId>", "pin-device:<terminalId>", "login:<ip>"
+  count   Int
+  resetAt DateTime @db.Timestamptz(3)
+
+  @@map("rate_limit_buckets")
+}
