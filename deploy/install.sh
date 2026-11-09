@@ -40,9 +40,9 @@ fi
 
 if [ -d "$ZIEL/.git" ]; then
   echo "==> Hole die neueste Version …"
-  git -C "$ZIEL" fetch -q origin "$BRANCH"
-  git -C "$ZIEL" checkout -q "$BRANCH"
-  git -C "$ZIEL" pull -q --ff-only origin "$BRANCH"
+  if ! { git -C "$ZIEL" fetch -q origin "$BRANCH" && git -C "$ZIEL" checkout -q "$BRANCH" && git -C "$ZIEL" pull -q --ff-only origin "$BRANCH"; }; then
+    echo "!! GitHub nicht erreichbar oder Stand abweichend – nutze die bereits vorhandene Version in $ZIEL."
+  fi
 else
   echo "==> Lade NAYA TIME herunter …"
   git clone -q --branch "$BRANCH" "$REPO" "$ZIEL"
