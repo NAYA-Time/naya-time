@@ -25,7 +25,7 @@ Stempeluhr für Restaurant NAYA. Ein iPad dient als Terminal, die Verwaltung lä
 
 ## Technik
 
-Node.js 22 mit Express, SQLite (eingebaut in Node) und ExcelJS. Davor läuft Caddy, das automatisch ein HTTPS-Zertifikat holt. Alle Daten (Datenbank und Fotos) liegen im Ordner `data/`.
+Node.js 22 mit Express, SQLite (eingebaut in Node) und ExcelJS. Davor läuft Caddy, das automatisch ein HTTPS-Zertifikat holt. Caddy ist fest auf **Let's Encrypt** eingestellt, weil der CAA-Eintrag der Zone naya-restaurant.de nur diese Zertifizierungsstelle zulässt. Alle Daten (Datenbank und Fotos) liegen im Ordner `data/`.
 
 ## Installation auf dem Hetzner-Server
 
