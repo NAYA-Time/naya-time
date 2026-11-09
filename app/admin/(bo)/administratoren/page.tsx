@@ -1,40 +1,49 @@
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/admin-auth";
-import { createAdminInvite, toggleAddSessionRight } from "@/lib/admin-actions-settings";
-import { ADD_SESSION_PERMISSION } from "@/lib/corrections";
+import { createAdminInvite, setAdminPermissions } from "@/lib/admin-actions-settings";
+import { OWNER_ONLY_PERMISSIONS } from "@/lib/permissions";
 import { ActionForm } from "@/components/ActionForm";
 
 export const metadata = { title: "Administratoren – NAYA TIME" };
 
 export default async function Administratoren() {
-  await requireAdmin("admins.manage");
-  const [users, roles] = await Promise.all([
+  const me = await requireAdmin("admins.manage");
+  const isOwner = me.roleKey === "OWNER";
+  const [users, roles, perms] = await Promise.all([
     prisma.adminUser.findMany({ include: { role: { include: { permissions: true } } }, orderBy: { name: "asc" } }),
     prisma.role.findMany({ orderBy: { name: "asc" } }),
+    prisma.permission.findMany({ orderBy: { key: "asc" } }),
   ]);
+  const grantable = perms.filter((p) => !OWNER_ONLY_PERMISSIONS.includes(p.key));
   return (
     <div className="grid max-w-4xl gap-5">
       <h1 className="text-3xl font-semibold">Administratoren</h1>
-      <p className="text-mute">Wer sich im Backoffice anmelden darf. „Schichten nachtragen“ ist ein Sonderrecht: Inhaber haben es immer, andere nur, wenn es hier eingeschaltet ist.</p>
+      <p className="text-mute">Wer sich im Backoffice anmelden darf. Der Inhaber hat immer alle Rechte. Für alle anderen legst du hier Recht für Recht fest, was sie sehen und tun dürfen.</p>
       <div className="grid gap-2">
         {users.map((u) => {
-          const viaRole = u.role.permissions.some((p) => p.permissionKey === ADD_SESSION_PERMISSION);
-          const extra = u.extraPermissions.includes(ADD_SESSION_PERMISSION);
+          const eff = new Set([...u.role.permissions.map((p) => p.permissionKey), ...u.extraPermissions].filter((k) => !u.revokedPermissions.includes(k)));
           return (
-            <div key={u.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-coal px-4 py-3">
-              <div>
-                <p className="font-semibold">{u.name}{!u.active && <span className="text-mute"> (deaktiviert)</span>}</p>
-                <p className="text-sm text-mute">{u.email} · {u.role.name} · 2FA {u.totpEnabled ? "eingerichtet" : "fehlt"}{u.lastLoginAt ? ` · zuletzt ${u.lastLoginAt.toLocaleDateString("de-DE", { timeZone: "Europe/Berlin" })}` : ""}</p>
-              </div>
-              {viaRole ? (
-                <span className="text-sm text-good">Darf Schichten nachtragen (Rolle)</span>
+            <div key={u.id} className="rounded-xl border border-line bg-coal px-4 py-3">
+              <p className="font-semibold">{u.name}{!u.active && <span className="text-mute"> (deaktiviert)</span>}</p>
+              <p className="text-sm text-mute">{u.email} · {u.role.name} · 2FA {u.totpEnabled ? "eingerichtet" : "fehlt"}{u.lastLoginAt ? ` · zuletzt ${u.lastLoginAt.toLocaleDateString("de-DE", { timeZone: "Europe/Berlin" })}` : ""}</p>
+              {u.role.key === "OWNER" ? (
+                <p className="mt-1 text-sm text-good">Alle Rechte (Inhaber)</p>
               ) : (
-                <form action={toggleAddSessionRight}>
-                  <input type="hidden" name="id" value={u.id} />
-                  <button className={`min-h-11 rounded-xl border px-4 text-sm ${extra ? "border-good/60 text-good" : "border-line text-mute hover:bg-slate"}`}>
-                    {extra ? "✓ Darf Schichten nachtragen – entziehen" : "Recht „Schichten nachtragen“ geben"}
-                  </button>
-                </form>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-sm text-gold">Rechte ansehen{isOwner ? " und ändern" : ""} ({eff.size} von {grantable.length})</summary>
+                  <ActionForm action={setAdminPermissions} submit="Rechte speichern" className="mt-3 grid gap-3">
+                    <input type="hidden" name="id" value={u.id} />
+                    <fieldset disabled={!isOwner} className="grid gap-1.5 sm:grid-cols-2">
+                      {grantable.map((p) => (
+                        <label key={p.key} className="flex items-start gap-3 rounded-lg border border-line px-3 py-2 text-sm">
+                          <input type="checkbox" name="perm" value={p.key} defaultChecked={eff.has(p.key)} className="mt-0.5 size-5 shrink-0 accent-gold" />
+                          <span>{p.description}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                    {!isOwner && <p className="text-sm text-mute">Ändern kann nur der Inhaber.</p>}
+                  </ActionForm>
+                </details>
               )}
             </div>
           );

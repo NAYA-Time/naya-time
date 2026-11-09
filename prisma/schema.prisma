@@ -290,23 +290,24 @@ model RolePermission {
 }
 
 model AdminUser {
-  id            String    @id @default(uuid()) @db.Uuid
-  email         String    @unique
-  name          String
-  passwordHash  String
-  totpSecretEnc Bytes? // verschlüsselt
-  totpEnabled   Boolean   @default(false)
-  recoveryCodes String[] // nur Hashes
-  extraPermissions String[] @default([]) // zusätzliche Einzelrechte für diese Person (z. B. timeclock.addSession)
-  roleId        String    @db.Uuid
-  role          Role      @relation(fields: [roleId], references: [id])
-  employeeId    String?   @unique @db.Uuid
-  employee      Employee? @relation(fields: [employeeId], references: [id])
-  active        Boolean   @default(true)
-  failedLogins  Int       @default(0)
-  lockedUntil   DateTime? @db.Timestamptz(3)
-  lastLoginAt   DateTime? @db.Timestamptz(3)
-  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  id                 String    @id @default(uuid()) @db.Uuid
+  email              String    @unique
+  name               String
+  passwordHash       String
+  totpSecretEnc      Bytes? // verschlüsselt
+  totpEnabled        Boolean   @default(false)
+  recoveryCodes      String[] // nur Hashes
+  extraPermissions   String[]  @default([]) // zusätzliche Einzelrechte für diese Person (z. B. timeclock.addSession)
+  revokedPermissions String[]  @default([]) // von der Rolle entzogene Einzelrechte (Inhaber gibt Rechte einzeln frei)
+  roleId             String    @db.Uuid
+  role               Role      @relation(fields: [roleId], references: [id])
+  employeeId         String?   @unique @db.Uuid
+  employee           Employee? @relation(fields: [employeeId], references: [id])
+  active             Boolean   @default(true)
+  failedLogins       Int       @default(0)
+  lockedUntil        DateTime? @db.Timestamptz(3)
+  lastLoginAt        DateTime? @db.Timestamptz(3)
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
 
   sessions Session[]
 
@@ -950,6 +951,7 @@ enum ReportType {
   WEEKLY
   MONTHLY
   PAYROLL_HOURLY
+  SICK_LIST
 }
 
 enum DeptFilter {

@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Backoffice – NAYA TIME" };
 
 // Navigation laut Konzept. Noch nicht gebaute Bereiche sind sichtbar als „folgt“ markiert.
-const NAV: { href?: string; label: string; perm?: string; soon?: string }[] = [
+const NAV: { href?: string; label: string; perm?: string; soon?: string; owner?: boolean }[] = [
   { href: "/admin", label: "Dashboard" },
   { href: "/admin/mitarbeiter", label: "Mitarbeiter", perm: "employees.view" },
   { href: "/admin/dienstplan", label: "Dienstplan", perm: "employees.view" },
@@ -17,6 +17,7 @@ const NAV: { href?: string; label: string; perm?: string; soon?: string }[] = [
   { href: "/admin/krankheit", label: "Krankheit", perm: "employees.view" },
   { href: "/admin/urlaub", label: "Urlaub", perm: "employees.view" },
   { href: "/admin/stundenkonten", label: "Stundenkonten", perm: "employees.view" },
+  { href: "/admin/plus-minus", label: "Plus / Minus", owner: true },
   { href: "/admin/monatsabschluss", label: "Monatsabschluss", perm: "employees.view" },
   { href: "/admin/aushilfen", label: "Aushilfenabrechnung", perm: "wages.view" },
   { href: "/admin/berichte", label: "Berichte", perm: "reports.create" },
@@ -38,7 +39,7 @@ export default async function BackofficeLayout({ children }: { children: React.R
         <img src="/brand/naya-logo.svg" alt="NAYA Restaurant & Bar" className="h-12 w-auto" />
         <p className="mb-5 mt-2 text-xs tracking-[0.2em] text-mute">TIME · BACKOFFICE</p>
         <nav className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible">
-          {NAV.filter((n) => !n.perm || admin.permissions.has(n.perm)).map((n) =>
+          {NAV.filter((n) => (!n.owner || admin.roleKey === "OWNER") && (!n.perm || admin.permissions.has(n.perm))).map((n) =>
             n.href ? (
               <Link key={n.label} href={n.href} className="whitespace-nowrap rounded-lg px-3 py-2.5 text-paper hover:bg-slate">{n.label}</Link>
             ) : (

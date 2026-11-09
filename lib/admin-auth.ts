@@ -33,7 +33,8 @@ async function loadAdmin() {
   return {
     sessionId: s.id, mfaPassed: s.mfaPassed, reauthAt: s.reauthAt,
     id: a.id, name: a.name, email: a.email, roleKey: a.role.key, roleName: a.role.name, totpEnabled: a.totpEnabled,
-    permissions: new Set([...a.role.permissions.map((p) => p.permissionKey), ...a.extraPermissions]),
+    // Rechte = Rolle + Einzelfreigaben − Einzelsperren (Inhaber behält immer alle)
+    permissions: new Set([...a.role.permissions.map((p) => p.permissionKey), ...a.extraPermissions].filter((p) => a.role.key === "OWNER" || !a.revokedPermissions.includes(p))),
   };
 }
 

@@ -6,6 +6,9 @@ import { audit } from "./audit";
 import { requireAdmin } from "./admin-auth";
 import { nextRunAt, runSchedule } from "./reports/runner";
 import type { FormState } from "./admin-actions-auth";
+import { mailConfigured, sendMail } from "./mail";
+import { sickReport } from "./reports/excel";
+import { saveReport } from "./reports/store";
 
 const back = () => revalidatePath("/admin/email");
 
@@ -80,4 +83,32 @@ export async function setScheduleRecipients(_: FormState, fd: FormData): Promise
   });
   back();
   return { ok: "Empfänger gespeichert." };
+}
+
+/** Krankheitsliste per E-Mail – nur auf ausdrücklichen Klick (Freigabe), an ausgewählte Empfänger */
+export async function sendSickList(_: FormState, fd: FormData): Promise<FormState> {
+  const admin = await requireAdmin("reports.email");
+  const from = String(fd.get("von") ?? ""), to = String(fd.get("bis") ?? "");
+  const filter = (["ALL", "KUECHE", "SERVICE"] as const).find((f) => f === fd.get("abteilung")) ?? "ALL";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return { error: "Bitte einen gültigen Zeitraum wählen." };
+  const ids = fd.getAll("recipient").map(String);
+  const recipients = await prisma.emailRecipient.findMany({ where: { id: { in: ids }, active: true } });
+  if (!recipients.length) return { error: "Bitte mindestens einen Empfänger auswählen." };
+  if (!mailConfigured()) return { error: "E-Mail-Versand ist noch nicht eingerichtet (SMTP-Daten fehlen). Die Liste kann trotzdem heruntergeladen werden." };
+  const built = await sickReport(prisma, from, to, filter);
+  const { report, buffer } = await saveReport(prisma, built, "SICK_LIST", filter, admin.id);
+  let sent = 0;
+  const failed: string[] = [];
+  for (const r of recipients) {
+    try {
+      const res = await sendMail(r.email, "NAYA TIME – Krankheitsliste", `Guten Tag,\n\nim Anhang die Krankheitsliste vom ${from.split("-").reverse().join(".")} bis ${to.split("-").reverse().join(".")} (${built.count} Krankmeldungen, nach Mitarbeitern sortiert).\n\nFreigegeben von ${admin.name}. Erstellt mit NAYA TIME.`, { filename: built.fileName, content: buffer });
+      await prisma.emailDeliveryLog.create({ data: { reportId: report.id, recipient: r.email, status: "SENT", providerId: res.providerId } });
+      sent++;
+    } catch (e) {
+      await prisma.emailDeliveryLog.create({ data: { reportId: report.id, recipient: r.email, status: "FAILED", error: (e as Error).message.slice(0, 300) } });
+      failed.push(r.email);
+    }
+  }
+  await prisma.$transaction((tx) => audit(tx, { actorKind: "ADMIN", actorId: admin.id, action: "REPORT_SENT", entityType: "GeneratedReport", entityId: report.id, after: { type: "SICK_LIST", from, to, sent, failed } }));
+  return failed.length ? { error: `${sent} gesendet, fehlgeschlagen an: ${failed.join(", ")}.` } : { ok: `Krankheitsliste an ${sent} Empfänger gesendet.` };
 }

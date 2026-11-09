@@ -4,6 +4,7 @@ import ExcelJS from "exceljs";
 import type { PrismaClient } from "@prisma/client";
 import { matchesFilter, type DeptFilter } from "../dept";
 import { loadMonth } from "../month-data";
+import { sickCounts } from "../sick";
 import { monthBounds } from "../calc/month";
 import { berlinDate, berlinTime, dbDate } from "../time";
 
@@ -166,3 +167,48 @@ export async function payrollReport(db: PrismaClient, periodId: string) {
 }
 
 export const today = () => berlinDate(new Date());
+
+const CERT_LABEL: Record<string, string> = { UNKNOWN: "noch offen", EAU_RETRIEVED: "eAU abgerufen", SUBMITTED: "vorgelegt", NOT_REQUIRED: "nicht erforderlich" };
+
+/** Krankheitsliste für einen Zeitraum, nach Mitarbeitern sortiert (ohne Diagnosen – die werden nie gespeichert) */
+export async function sickReport(db: PrismaClient, from: string, to: string, filter: DeptFilter) {
+  const absences = await db.absence.findMany({
+    where: { type: { in: ["SICK", "SICK_CHILD"] }, status: { not: "CANCELLED" }, startDate: { lte: dbDate(to) }, endDate: { gte: dbDate(from) } },
+    include: { employee: { include: { primaryDept: { include: { parent: true } } } }, days: true, sickLeave: true },
+  });
+  const rows = absences
+    .filter((a) => matchesFilter(filter, a.employee.primaryDept))
+    .sort((a, b) => a.employee.lastName.localeCompare(b.employee.lastName, "de") || a.employee.firstName.localeCompare(b.employee.firstName, "de") || a.startDate.getTime() - b.startDate.getTime());
+  const wb = new ExcelJS.Workbook();
+  meta(wb);
+  const sum = sheet(wb, "Nach Mitarbeitern", [
+    { header: "Mitarbeiter", key: "name", width: 24 }, { header: "Abteilung", key: "dept" }, { header: "Krankmeldungen", key: "count", width: 16 },
+    { header: "Krankheitstage", key: "sickDays", width: 15 }, { header: "davon Kind krank", key: "childDays", width: 16 }, { header: "Angerechnet", key: "credit", time: true }, { header: "AU offen", key: "open", width: 10 },
+    { header: "Krank im lfd. Jahr", key: "yearDays", width: 17 }, { header: "Krank seit Eintritt", key: "totalDays", width: 18 }, { header: "Eintritt", key: "entry", width: 12 },
+  ]);
+  const counts = await sickCounts([...new Set(rows.map((a) => a.employeeId))], to);
+  const list = sheet(wb, "Einzelne Krankmeldungen", [
+    { header: "Mitarbeiter", key: "name", width: 24 }, { header: "Abteilung", key: "dept" }, { header: "Art", key: "type", width: 12 }, { header: "Von", key: "from", width: 12 },
+    { header: "Bis", key: "to", width: 12 }, { header: "Tage im Zeitraum", key: "days", width: 16 }, { header: "Angerechnet", key: "credit", time: true }, { header: "AU-Bescheinigung", key: "cert", width: 18 },
+  ]);
+  // Kalendertage innerhalb des gewählten Zeitraums (eine Krankmeldung kann über den Zeitraum hinausgehen)
+  const daysIn = (a: (typeof rows)[number]) => {
+    const s = Math.max(Date.parse(ymd(a.startDate)), Date.parse(from)), e = Math.min(Date.parse(ymd(a.endDate)), Date.parse(to));
+    return Math.max(0, Math.round((e - s) / 86400000) + 1);
+  };
+  const creditIn = (a: (typeof rows)[number]) => a.days.filter((d) => ymd(d.date) >= from && ymd(d.date) <= to).reduce((x, d) => x + d.creditedMinutes, 0);
+  const byEmp = new Map<string, typeof rows>();
+  for (const a of rows) byEmp.set(a.employeeId, [...(byEmp.get(a.employeeId) ?? []), a]);
+  for (const [, as] of byEmp) {
+    const e = as[0].employee;
+    sum.addRow({
+      name: `${e.lastName}, ${e.firstName}`, dept: e.primaryDept.name, count: as.length,
+      sickDays: as.filter((a) => a.type === "SICK").reduce((x, a) => x + daysIn(a), 0), childDays: as.filter((a) => a.type === "SICK_CHILD").reduce((x, a) => x + daysIn(a), 0),
+      credit: t(as.reduce((x, a) => x + creditIn(a), 0)), open: as.filter((a) => a.type === "SICK" && (a.sickLeave?.certificateStatus ?? "UNKNOWN") === "UNKNOWN").length,
+      yearDays: counts.get(e.id)?.sickYear ?? 0, totalDays: counts.get(e.id)?.sickTotal ?? 0, entry: de(ymd(e.entryDate)),
+    });
+    for (const a of as) list.addRow({ name: `${e.lastName}, ${e.firstName}`, dept: e.primaryDept.name, type: ABS_LABEL[a.type], from: de(ymd(a.startDate)), to: de(ymd(a.endDate)), days: daysIn(a), credit: t(creditIn(a)), cert: a.type === "SICK" ? CERT_LABEL[a.sickLeave?.certificateStatus ?? "UNKNOWN"] ?? "–" : "–" });
+  }
+  if (!rows.length) sum.addRow({ name: "Keine Krankmeldungen in diesem Zeitraum" });
+  return { wb, fileName: `NAYA-TIME_Krankheit_${from}_bis_${to}_${DEPT_LABEL[filter]}.xlsx`, periodStart: from, periodEnd: to, count: rows.length };
+}

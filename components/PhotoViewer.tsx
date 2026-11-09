@@ -18,17 +18,19 @@ export function PhotoButton({ name, date, photos }: { name: string; date: string
         {photos.length}
       </button>
       <dialog ref={ref} onClose={() => setOpen(false)} onClick={(e) => { if (e.target === ref.current) ref.current?.close(); }}
-        className="m-auto w-[min(56rem,calc(100vw-2rem))] rounded-2xl border border-line bg-coal p-0 text-paper backdrop:bg-black/70">
+        className="m-auto w-[min(110rem,calc(100vw-1rem))] max-h-[calc(100vh-1rem)] rounded-2xl border border-line bg-coal p-0 text-paper backdrop:bg-black/70">
         <div className="flex items-center justify-between border-b border-line px-5 py-3">
           <p className="font-semibold">{name} · {date}</p>
           <button type="button" onClick={() => ref.current?.close()} className="rounded-lg border border-line px-3 py-1 text-sm hover:bg-slate">Schließen</button>
         </div>
-        <div className="grid gap-4 p-5 sm:grid-cols-2">
+        <div className="grid gap-4 p-4 lg:grid-cols-2">
           {open && photos.map((p) => (
             <figure key={p.id} className="grid gap-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`/admin/zeiten/foto/${p.id}`} alt={`${p.label} ${p.time}`} className="aspect-[4/3] w-full rounded-xl bg-ink object-cover" />
-              <figcaption className="text-sm text-mute">{p.label} um {p.time} Uhr</figcaption>
+              <a href={`/admin/zeiten/foto/${p.id}`} target="_blank" rel="noopener" title="In voller Größe öffnen">
+                <img src={`/admin/zeiten/foto/${p.id}`} alt={`${p.label} ${p.time}`} className="max-h-[75vh] w-full rounded-xl bg-ink object-contain" />
+              </a>
+              <figcaption className="text-sm text-mute">{p.label} um {p.time} Uhr · Klick aufs Bild öffnet es in voller Größe</figcaption>
             </figure>
           ))}
         </div>

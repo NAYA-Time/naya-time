@@ -7,6 +7,8 @@ import { ActionForm, Field } from "@/components/ActionForm";
 import { Check, Section, Select } from "@/components/Select";
 import { EMPLOYMENT_LABEL, METHOD_LABEL, dateDe, euro } from "@/lib/labels";
 import { berlinDate, fmtMinutes } from "@/lib/time";
+import { vacationInclude, vacationOverview, vacationTakenTotal } from "@/lib/vacation";
+import { sickCounts } from "@/lib/sick";
 
 export default async function EmployeeDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ code?: string }> }) {
   const admin = await requireAdmin("employees.view");
@@ -29,6 +31,11 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
   const hourly = e.employmentType !== "FESTANGESTELLT";
   const today = berlinDate(new Date());
   const v = e.portalSettings;
+  const year = Number(today.slice(0, 4));
+  const [vac] = await vacationOverview([await prisma.employee.findUniqueOrThrow({ where: { id }, include: vacationInclude(year) })], year);
+  const sick = (await sickCounts([id], today)).get(id)!;
+  const vacTotal = await vacationTakenTotal(id);
+  const days = (n: number) => `${n.toLocaleString("de-DE")} ${n === 1 ? "Tag" : "Tage"}`;
   return (
     <div className="grid max-w-4xl gap-5">
       <Link href="/admin/mitarbeiter" className="text-mute hover:text-paper">‹ Alle Mitarbeiter</Link>
@@ -37,7 +44,22 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
           <h1 className="text-3xl font-semibold">{e.firstName} {e.lastName}{!e.active && <span className="ml-3 text-base text-warn">inaktiv</span>}</h1>
           <p className="text-mute">Nr. {e.personnelNumber} · {e.primaryDept.name}{e.subDept ? ` · ${e.subDept.name}` : ""} · {EMPLOYMENT_LABEL[e.employmentType]}</p>
         </div>
-        {!hourly && <div className="rounded-2xl border border-line bg-coal px-5 py-3 text-right"><p className="text-xs tracking-wider text-mute">STUNDENKONTO</p><p className={`text-2xl font-bold tabular ${balance < 0 ? "text-bad" : balance > 0 ? "text-good" : ""}`}>{balance > 0 ? "+" : ""}{fmtMinutes(balance)}</p></div>}
+        <div className="flex flex-wrap gap-3">
+          {(vac.entitlement > 0 || vac.taken > 0 || vac.planned > 0 || vacTotal > 0) && (
+            <div className="rounded-2xl border border-line bg-coal px-5 py-3">
+              <p className="text-xs tracking-wider text-mute">URLAUB {year}</p>
+              <p className={`text-2xl font-bold tabular ${vac.rest < 0 ? "text-bad" : ""}`}>noch {days(vac.rest)}</p>
+              <p className="text-xs text-mute tabular">Anspruch {days(vac.entitlement)}{vac.carry ? ` + ${days(vac.carry)} Übertrag` : ""} · genommen {days(vac.taken)}{vac.planned ? ` · geplant ${days(vac.planned)}` : ""}</p>
+              <p className="text-xs text-mute tabular">genommen seit Eintritt: {days(vacTotal)}</p>
+            </div>
+          )}
+          <div className="rounded-2xl border border-line bg-coal px-5 py-3">
+            <p className="text-xs tracking-wider text-mute">KRANKHEITSTAGE</p>
+            <p className="text-sm tabular"><span className="text-2xl font-bold">{sick.sickYear}</span> in {year}{sick.childYear ? <span className="text-mute"> · Kind krank {sick.childYear}</span> : null}</p>
+            <p className="text-sm text-mute tabular">{sick.sickTotal} seit Eintritt am {dateDe(e.entryDate)}{sick.childTotal ? ` · Kind krank ${sick.childTotal}` : ""}</p>
+          </div>
+          {!hourly && <div className="rounded-2xl border border-line bg-coal px-5 py-3 text-right"><p className="text-xs tracking-wider text-mute">STUNDENKONTO</p><p className={`text-2xl font-bold tabular ${balance < 0 ? "text-bad" : balance > 0 ? "text-good" : ""}`}>{balance > 0 ? "+" : ""}{fmtMinutes(balance)}</p></div>}
+        </div>
       </div>
 
       {code && (

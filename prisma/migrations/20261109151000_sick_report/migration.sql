@@ -1,0 +1,1 @@
+ALTER TYPE "ReportType" ADD VALUE 'SICK_LIST';

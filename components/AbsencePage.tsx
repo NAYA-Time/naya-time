@@ -4,6 +4,9 @@ import { cancelAbsence, createAbsence } from "@/lib/admin-actions-absences";
 import { currentDeptFilter, matchesFilter } from "@/lib/dept";
 import { dateDe } from "@/lib/labels";
 import { berlinDate, fmtMinutes } from "@/lib/time";
+import { vacationOverview } from "@/lib/vacation";
+import { sendSickList } from "@/lib/admin-actions-reports";
+import { mailConfigured } from "@/lib/mail";
 import { ActionForm, Field } from "./ActionForm";
 import { Section, Select } from "./Select";
 
@@ -24,6 +27,7 @@ export async function AbsencePage({ mode }: { mode: "sick" | "vacation" }) {
   const visible = emps.filter((e) => matchesFilter(filter, e.primaryDept));
   const rows = absences.filter((a) => matchesFilter(filter, a.employee.primaryDept));
   const canManage = admin.permissions.has("absences.manage");
+  const recipients = mode === "sick" ? await prisma.emailRecipient.findMany({ where: { active: true }, orderBy: { email: "asc" } }) : [];
 
   // Urlaubskonto je Mitarbeiter für das laufende Jahr
   const vacation = mode === "vacation" ? await vacationOverview(visible, year) : [];
@@ -58,6 +62,34 @@ export async function AbsencePage({ mode }: { mode: "sick" | "vacation" }) {
         </Section>
       )}
 
+      {mode === "sick" && admin.permissions.has("reports.create") && (
+        <Section title="Krankheitsliste als Excel" hint="Nach Mitarbeitern sortiert: Krankheitstage im Zeitraum, im laufenden Jahr und seit Eintritt, angerechnete Stunden, Stand der AU-Bescheinigung. Keine Diagnosen.">
+          <form action="/admin/krankheit/export" className="grid gap-4 sm:grid-cols-4 sm:items-end">
+            <Field label="Von" name="von" type="date" defaultValue={`${year}-01-01`} required />
+            <Field label="Bis" name="bis" type="date" defaultValue={berlinDate(new Date())} required />
+            <Select label="Abteilung" name="abteilung" defaultValue={filter} options={[["ALL", "Alle"], ["KUECHE", "Küche"], ["SERVICE", "Service"]]} />
+            <button className="min-h-12 rounded-xl bg-gold px-6 font-semibold text-ink">Herunterladen</button>
+          </form>
+          {admin.permissions.has("reports.email") && (
+            <details className="mt-4">
+              <summary className="cursor-pointer text-sm text-gold">Per E-Mail verschicken (erst nach deinem Klick auf „Freigeben und senden“)</summary>
+              {!mailConfigured() ? <p className="mt-2 text-sm text-warn">E-Mail-Versand ist noch nicht eingerichtet (SMTP-Daten fehlen).</p> : !recipients.length ? <p className="mt-2 text-sm text-mute">Noch keine Empfänger angelegt – unter „E-Mail-Automatisierung“ hinzufügen.</p> : (
+                <ActionForm action={sendSickList} submit="Freigeben und senden" className="mt-3 grid gap-3">
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <Field label="Von" name="von" type="date" defaultValue={`${year}-01-01`} required />
+                    <Field label="Bis" name="bis" type="date" defaultValue={berlinDate(new Date())} required />
+                    <Select label="Abteilung" name="abteilung" defaultValue={filter} options={[["ALL", "Alle"], ["KUECHE", "Küche"], ["SERVICE", "Service"]]} />
+                  </div>
+                  <fieldset className="grid gap-1.5 text-sm"><legend className="mb-1 text-mute">Empfänger</legend>
+                    {recipients.map((r) => <label key={r.id} className="flex items-center gap-2"><input type="checkbox" name="recipient" value={r.id} className="size-5 accent-gold" />{r.name ? `${r.name} – ` : ""}{r.email}</label>)}
+                  </fieldset>
+                </ActionForm>
+              )}
+            </details>
+          )}
+        </Section>
+      )}
+
       <Section title="Einträge">
         {rows.length === 0 ? <p className="text-mute">Keine Einträge.</p> : (
           <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-left text-sm tabular">
@@ -83,22 +115,3 @@ export async function AbsencePage({ mode }: { mode: "sick" | "vacation" }) {
 
 function dbYearStart(y: number) { return new Date(`${y}-01-01T00:00:00.000Z`); }
 
-async function vacationOverview(emps: { id: string; firstName: string; lastName: string; entryDate: Date; contracts: { vacationDaysPerYear: number }[]; vacationBalances: { carryOverHalfDays: number; manualAdjustHalfDays: number }[] }[], year: number) {
-  const days = await prisma.absenceDay.findMany({
-    where: { vacationDayValue: { gt: 0 }, date: { gte: dbYearStart(year), lt: dbYearStart(year + 1) }, absence: { status: { not: "CANCELLED" }, employeeId: { in: emps.map((e) => e.id) } } },
-    include: { absence: { select: { employeeId: true } } },
-  });
-  const today = new Date(berlinDate(new Date()) + "T00:00:00Z");
-  return emps.map((e) => {
-    const full = e.contracts[0]?.vacationDaysPerYear ?? 0;
-    const entryYear = e.entryDate.getUTCFullYear();
-    const months = entryYear < year ? 12 : entryYear > year ? 0 : 12 - e.entryDate.getUTCMonth() - (e.entryDate.getUTCDate() > 1 ? 1 : 0);
-    const entitlement = Math.ceil(((full * months) / 12) * 2) / 2;
-    const bal = e.vacationBalances[0];
-    const carry = (bal?.carryOverHalfDays ?? 0) / 2 + (bal?.manualAdjustHalfDays ?? 0) / 2;
-    const mine = days.filter((d) => d.absence.employeeId === e.id);
-    const taken = mine.filter((d) => d.date <= today).reduce((x, d) => x + d.vacationDayValue, 0) / 2;
-    const planned = mine.filter((d) => d.date > today).reduce((x, d) => x + d.vacationDayValue, 0) / 2;
-    return { id: e.id, name: `${e.lastName}, ${e.firstName}`, entitlement, carry, taken, planned, rest: entitlement + carry - taken - planned };
-  });
-}

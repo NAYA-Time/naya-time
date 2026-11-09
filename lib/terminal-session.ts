@@ -2,6 +2,8 @@ import { prisma } from "./db";
 import { signTicket } from "./crypto";
 import { employeeState, findShift, markStaleSessions } from "./stamp";
 import { requiredBreakForPresence } from "./calc/session";
+import { runningBalance } from "./month-data";
+import { vacationInclude, vacationOverview } from "./vacation";
 import { berlinDate, berlinLongDate, berlinTime, dbDate, minutesBetween } from "./time";
 
 export const TICKET_TTL = 120; // Sekunden – danach muss der PIN erneut eingegeben werden
@@ -33,7 +35,27 @@ export async function terminalGreeting(employeeId: string, terminalId: string) {
     actions,
     askBreak,
     plan: await myPlan(employeeId, now),
+    vacation: await myVacation(employeeId, now),
+    // Gunnar 09.11.2026: beim Einstempeln täglich zeigen, wenn das Stundenkonto im Minus ist (Stand bis einschließlich gestern) – nur Minus, sonst nichts
+    minusMinutes: state === "OUT" ? await minusUntilYesterday(employeeId, now) : null,
   };
+}
+
+/** Eigenes Urlaubskonto für "Mein Dienstplan" (nur wenn ein Anspruch hinterlegt ist) */
+async function myVacation(employeeId: string, now: Date) {
+  const year = Number(berlinDate(now).slice(0, 4));
+  const [v] = await vacationOverview([await prisma.employee.findUniqueOrThrow({ where: { id: employeeId }, include: vacationInclude(year) })], year);
+  return v.entitlement || v.taken || v.planned ? { year, entitlement: v.entitlement + v.carry, taken: v.taken, planned: v.planned, rest: v.rest } : null;
+}
+
+async function minusUntilYesterday(employeeId: string, now: Date): Promise<number | null> {
+  try {
+    const b = await runningBalance(prisma, employeeId, berlinDate(now));
+    return b !== null && b < 0 ? -b : null;
+  } catch (e) {
+    console.error("Stundenkonto-Stand", e); // Einstempeln darf daran nie scheitern
+    return null;
+  }
 }
 
 const addDays = (ymd: string, n: number) => new Date(Date.parse(ymd + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
