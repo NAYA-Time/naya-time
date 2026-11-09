@@ -7,6 +7,7 @@ set -euo pipefail
 ZIEL=/opt/naya-time
 REPO=https://github.com/NAYA-Time/naya-time.git
 BRANCH=${NAYA_BRANCH:-main}
+export GIT_TERMINAL_PROMPT=0  # nie nach GitHub-Zugangsdaten fragen
 
 [ "$(id -u)" -eq 0 ] || { echo "Bitte als root ausführen." >&2; exit 1; }
 cloud-init status --wait >/dev/null 2>&1 || true
