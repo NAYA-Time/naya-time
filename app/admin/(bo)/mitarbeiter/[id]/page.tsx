@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/admin-auth";
-import { addContract, addOvertimeRule, addWage, resetPin, savePortalVisibility, setActive, updateEmployee } from "@/lib/admin-actions-employees";
+import { addContract, addOvertimeRule, setWorkdays, addWage, resetPin, savePortalVisibility, setActive, updateEmployee } from "@/lib/admin-actions-employees";
 import { ActionForm, Field } from "@/components/ActionForm";
 import { PortalInvite } from "@/components/PortalInvite";
-import { Check, Section, Select } from "@/components/Select";
+import { Check, Section, Select, WeekdayPicker } from "@/components/Select";
+import { maskCount, maskLabel } from "@/lib/workdays";
 import { EMPLOYMENT_LABEL, METHOD_LABEL, dateDe, euro } from "@/lib/labels";
 import { berlinDate, fmtMinutes } from "@/lib/time";
 import { vacationInclude, vacationOverview, vacationTakenTotal } from "@/lib/vacation";
@@ -18,7 +20,9 @@ import { addReminder, reminderAction } from "@/lib/admin-actions-reminders";
 export default async function EmployeeDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ code?: string }> }) {
   const admin = await requireAdmin("employees.view");
   const { id } = await params;
-  const { code } = await searchParams;
+  await searchParams;
+  const flash = (await cookies()).get("naya_setup_code")?.value.split(":");
+  const code = flash?.[0] === id ? flash[1] : undefined; // nur ca. 2 Minuten nach dem Anlegen sichtbar
   const e = await prisma.employee.findUnique({
     where: { id },
     include: {
@@ -71,7 +75,7 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
       {code && (
         <p className="rounded-2xl border border-gold/50 bg-gold/10 px-5 py-4 text-paper">
           Einrichtungscode für das Terminal: <b className="font-mono text-2xl tracking-[0.3em] text-gold">{code}</b><br />
-          <span className="text-sm text-mute">Gib den Code dem Mitarbeiter persönlich. Er wählt damit beim ersten Stempeln seinen eigenen PIN. 7 Tage gültig, wird nur jetzt angezeigt.</span>
+          <span className="text-sm text-mute">Gib den Code dem Mitarbeiter persönlich. Er wählt damit beim ersten Stempeln seinen eigenen PIN. 7 Tage gültig, wird nur jetzt (ca. 2 Minuten) angezeigt.</span>
         </p>
       )}
 
@@ -98,12 +102,12 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
 
       <Section title="Vertrag" hint="Änderungen gelten ab einem Datum. Frühere Zeiträume werden weiter mit den alten Werten berechnet.">
         <table className="mb-4 w-full text-left text-sm tabular">
-          <thead className="text-xs tracking-wider text-mute"><tr><th className="py-2">GÜLTIG</th><th>WOCHENSOLL</th><th>MONATSSOLL</th><th>TAGE/WOCHE</th><th>URLAUB</th></tr></thead>
+          <thead className="text-xs tracking-wider text-mute"><tr><th className="py-2">GÜLTIG</th><th>WOCHENSOLL</th><th>MONATSSOLL</th><th>ARBEITSTAGE</th><th>URLAUB</th></tr></thead>
           <tbody>{e.contracts.map((c) => (
-            <tr key={c.id} className="border-t border-line"><td className="py-2">{dateDe(c.validFrom)} – {c.validTo ? dateDe(c.validTo) : "heute"}</td><td>{c.weeklyMinutes != null ? fmtMinutes(c.weeklyMinutes) : "variabel"}</td><td>{METHOD_LABEL[c.monthlyTargetMethod]}{c.weeklyMinutes ? ` (Ø ${fmtMinutes(Math.round((c.weeklyMinutes * 13) / 3))})` : ""}</td><td>{c.workdaysPerWeek}</td><td>{c.vacationDaysPerYear} Tage</td></tr>
+            <tr key={c.id} className="border-t border-line"><td className="py-2">{dateDe(c.validFrom)} – {c.validTo ? dateDe(c.validTo) : "heute"}</td><td>{c.weeklyMinutes != null ? fmtMinutes(c.weeklyMinutes) : "variabel"}</td><td>{METHOD_LABEL[c.monthlyTargetMethod]}{c.weeklyMinutes ? ` (Ø ${fmtMinutes(Math.round((c.weeklyMinutes * 13) / 3))})` : ""}</td><td>{maskLabel(c.workdaysMask)}{c.workdaysPerWeek !== maskCount(c.workdaysMask) && <span className="text-warn"> (Tage/Woche: {c.workdaysPerWeek} – passt nicht)</span>}</td><td>{c.vacationDaysPerYear} Tage</td></tr>
           ))}</tbody>
         </table>
-        {can("contracts.manage") && (
+        {can("contracts.manage") && (<>
           <details><summary className="cursor-pointer text-gold">Neuen Vertragsstand anlegen</summary>
             <div className="mt-4"><ActionForm action={addContract} submit="Vertragsstand speichern">
               <input type="hidden" name="id" value={e.id} />
@@ -111,13 +115,23 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
                 <Field label="Gültig ab" name="validFrom" type="date" defaultValue={today} required />
                 <Field label="Wochenstunden" name="weeklyHours" defaultValue={e.contracts[0]?.weeklyMinutes != null ? fmtMinutes(e.contracts[0].weeklyMinutes) : ""} />
                 <Select label="Monatssoll" name="method" options={Object.entries(METHOD_LABEL)} defaultValue={e.contracts[0]?.monthlyTargetMethod} />
-                <Field label="Arbeitstage pro Woche" name="workdaysPerWeek" type="number" defaultValue={e.contracts[0]?.workdaysPerWeek ?? 5} />
+                <WeekdayPicker mask={e.contracts[0]?.workdaysMask ?? 31} />
                 <Field label="Urlaubstage pro Jahr" name="vacationDays" type="number" defaultValue={e.contracts[0]?.vacationDaysPerYear ?? 0} />
                 <Field label="Notiz" name="note" />
               </div>
             </ActionForm></div>
           </details>
-        )}
+          {e.contracts[0] && (
+            <details className="mt-3"><summary className="cursor-pointer text-gold">Arbeitstage des aktuellen Vertrags berichtigen</summary>
+              <div className="mt-4"><ActionForm action={setWorkdays} submit="Arbeitstage speichern">
+                <input type="hidden" name="id" value={e.id} />
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <WeekdayPicker mask={e.contracts[0].workdaysMask} hint="Gilt rückwirkend für den ganzen aktuellen Vertragsstand. Für eine Änderung ab einem Datum bitte „Neuen Vertragsstand anlegen“ nutzen." />
+                </div>
+              </ActionForm></div>
+            </details>
+          )}
+        </>)}
       </Section>
 
       {!hourly && (

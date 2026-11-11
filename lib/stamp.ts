@@ -117,7 +117,8 @@ export async function stamp(input: StampInput) {
     }
   }
 
-  return prisma.$transaction(async (tx) => {
+  try {
+    return await prisma.$transaction(async (tx) => {
     // Pro Mitarbeiter serialisieren (zwei Tablets/Doppeltipp gleichzeitig)
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.employeeId}))`;
     const emp = await tx.employee.findUniqueOrThrow({ where: { id: input.employeeId } });
@@ -239,4 +240,10 @@ export async function stamp(input: StampInput) {
 
     return { eventId: ev.id, bookingNo: ev.bookingNo.toString(), type: ev.type, at: now, duplicate: false };
   });
+  } catch (e) {
+    // Buchung abgelehnt oder fehlgeschlagen: bereits gespeichertes Foto wieder entfernen, sonst bliebe es ohne
+    // Datenbankeintrag liegen und würde von der Löschfrist nie erfasst.
+    if (photoRow) await blobStore.delete(photoRow.storageKey).catch(() => {});
+    throw e;
+  }
 }

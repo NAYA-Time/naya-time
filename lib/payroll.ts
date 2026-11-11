@@ -4,6 +4,7 @@ import { prisma } from "./db";
 import { audit } from "./audit";
 import { amount, employmentLimitHints, paymentStatus, preparePayroll, type PayEmployee, type PaySource, type Wage } from "./calc/payroll";
 import { dbDate } from "./time";
+import { capAbsenceByWork } from "./calc/absence";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
@@ -23,9 +24,16 @@ export async function loadOpenPayroll(db: Db, cutoff: string): Promise<PayEmploy
     const k = i.workSessionId ? `WORK:${i.workSessionId}` : `PAID_ABSENCE:${i.absenceDayId}`;
     settled.set(k, (settled.get(k) ?? 0) + i.minutes);
   }
+  const workedByDay = new Map<string, number>();
+  for (const s of sessions) if (s.status === "CLOSED") { const k = `${s.employeeId}|${ymd(s.workDate)}`; workedByDay.set(k, (workedByDay.get(k) ?? 0) + s.payableMinutes); }
   const sources: PaySource[] = [
     ...sessions.filter((s) => hourlyAt.get(s.employeeId)!(ymd(s.workDate))).map((s) => ({ kind: "WORK" as const, sourceId: s.id, employeeId: s.employeeId, workDate: ymd(s.workDate), minutes: s.status === "CLOSED" ? s.payableMinutes : 0, open: s.status !== "CLOSED" })),
-    ...absDays.filter((a) => hourlyAt.get(a.absence.employeeId)!(ymd(a.date))).map((a) => ({ kind: "PAID_ABSENCE" as const, sourceId: a.id, employeeId: a.absence.employeeId, workDate: ymd(a.date), minutes: a.creditedMinutes })),
+    // Abwesenheit zählt nur für die am Tag nicht gearbeitete Zeit (keine Doppelzählung)
+    ...absDays.filter((a) => hourlyAt.get(a.absence.employeeId)!(ymd(a.date))).map((a) => {
+      const worked = workedByDay.get(`${a.absence.employeeId}|${ymd(a.date)}`) ?? 0;
+      const minutes = capAbsenceByWork([{ date: ymd(a.date), creditedMinutes: a.creditedMinutes }], new Map([[ymd(a.date), worked]]))[0].creditedMinutes;
+      return { kind: "PAID_ABSENCE" as const, sourceId: a.id, employeeId: a.absence.employeeId, workDate: ymd(a.date), minutes };
+    }),
   ];
   const wages = new Map<string, Wage[]>(emps.map((e) => [e.id, e.wages.map((w) => ({ validFrom: ymd(w.validFrom), validTo: w.validTo ? ymd(w.validTo) : null, centsPerHour: w.centsPerHour }))]));
   const result = preparePayroll(cutoff, sources, settled, wages);
@@ -65,7 +73,9 @@ export async function settlePayrollPeriod(adminId: string, id: string) {
   return prisma.$transaction(async (tx) => {
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id } });
     if (p.status !== "PREPARED") return { error: "Dieser Lauf ist nicht mehr im Status „vorbereitet“." };
-    await tx.payrollPeriod.update({ where: { id }, data: { status: "SETTLED", settledAt: new Date(), settledById: adminId } });
+    // Bedingtes Speichern: klickt gleichzeitig jemand auf „Stornieren“, gewinnt genau einer
+    const done = await tx.payrollPeriod.updateMany({ where: { id, status: "PREPARED" }, data: { status: "SETTLED", settledAt: new Date(), settledById: adminId } });
+    if (done.count !== 1) return { error: "Dieser Lauf ist nicht mehr im Status „vorbereitet“." };
     await tx.payrollSettlement.updateMany({ where: { periodId: id, status: "PREPARED" }, data: { status: "SETTLED" } });
     await audit(tx, { actorKind: "ADMIN", actorId: adminId, action: "PAYROLL_SETTLED", entityType: "PayrollPeriod", entityId: id });
     return { ok: "Abrechnung festgeschrieben. Die Stunden gelten jetzt als abgerechnet." };
@@ -76,7 +86,8 @@ export async function cancelPayrollPeriod(adminId: string, id: string) {
   return prisma.$transaction(async (tx) => {
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id } });
     if (p.status !== "PREPARED") return { error: "Nur ein vorbereiteter Lauf kann storniert werden. Festgeschriebene Abrechnungen bleiben; Korrekturen erscheinen im nächsten Lauf als Differenz." };
-    await tx.payrollPeriod.update({ where: { id }, data: { status: "CANCELLED" } });
+    const done = await tx.payrollPeriod.updateMany({ where: { id, status: "PREPARED" }, data: { status: "CANCELLED" } });
+    if (done.count !== 1) return { error: "Dieser Lauf wurde gerade von jemand anderem festgeschrieben oder storniert." };
     await audit(tx, { actorKind: "ADMIN", actorId: adminId, action: "PAYROLL_CANCELLED", entityType: "PayrollPeriod", entityId: id });
     return { ok: "Lauf storniert. Die Stunden sind wieder offen." };
   });
@@ -85,6 +96,7 @@ export async function cancelPayrollPeriod(adminId: string, id: string) {
 /** Zahlung buchen oder stornieren (reverseId: Zahlung wird als storniert markiert, bleibt aber sichtbar) */
 export async function recordPayment(adminId: string, settlementId: string, amountCents: number, paidOn: string, reference: string | null, reverseId?: string) {
   return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"payment:" + settlementId}))`; // zwei gleichzeitige Zahlungen nacheinander prüfen
     const s = await tx.payrollSettlement.findUniqueOrThrow({ where: { id: settlementId }, include: { period: true, payments: true } });
     if (s.period.status !== "SETTLED") return { error: "Bitte die Abrechnung zuerst festschreiben." };
     const valid = s.payments.filter((p) => !p.reversedById);

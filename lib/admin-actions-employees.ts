@@ -1,7 +1,9 @@
 "use server";
+import { parseWorkdays } from "./workdays";
 import { randomInt } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import type { EmploymentType, MonthlyTargetMethod } from "@prisma/client";
 import { prisma } from "./db";
 import { minimumWageCents } from "./calc/minwage";
@@ -52,6 +54,8 @@ export async function createEmployee(_: FormState, fd: FormData): Promise<FormSt
   if (hourly && !admin.permissions.has("wages.manage")) return { error: "Dir fehlt die Berechtigung, Stundenlöhne festzulegen." };
   const included = Number(s(fd, "includedHours") || "0");
   const email = s(fd, "email") || null;
+  const wd = parseWorkdays(fd);
+  if (wd && "error" in wd) return { error: wd.error };
 
   const setup = await newSetupCode();
   const emp = await prisma.$transaction(async (tx) => {
@@ -62,7 +66,8 @@ export async function createEmployee(_: FormState, fd: FormData): Promise<FormSt
         contracts: {
           create: {
             validFrom: dbDate(entryDate), payModel: hourly ? "HOURLY" : "SALARIED", weeklyMinutes: weekly,
-            workdaysPerWeek: Number(s(fd, "workdaysPerWeek") || "5"), vacationDaysPerYear: Number(s(fd, "vacationDays") || "0"), createdById: admin.id,
+            workdaysMask: wd?.mask ?? 31, workdaysPerWeek: wd?.perWeek ?? Number(s(fd, "workdaysPerWeek") || "5"),
+            vacationDaysPerYear: Number(s(fd, "vacationDays") || "0"), createdById: admin.id,
           },
         },
         departmentHistory: { create: { departmentId: primaryDeptId, validFrom: dbDate(entryDate) } },
@@ -81,7 +86,9 @@ export async function createEmployee(_: FormState, fd: FormData): Promise<FormSt
     await audit(tx, { actorKind: "ADMIN", actorId: admin.id, action: "EMPLOYEE_CREATED", entityType: "Employee", entityId: e.id, employeeId: e.id, after: { firstName, lastName, personnelNumber, employmentType } });
     return e;
   });
-  redirect(`/admin/mitarbeiter/${emp.id}?code=${setup.code}`);
+  // Einrichtungscode nicht in die Adresszeile (Browserverlauf), sondern einmalig per kurzlebigem Cookie zur Folgeseite
+  (await cookies()).set("naya_setup_code", `${emp.id}:${setup.code}`, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict", path: "/admin/mitarbeiter", maxAge: 120 });
+  redirect(`/admin/mitarbeiter/${emp.id}`);
 }
 
 export async function updateEmployee(_: FormState, fd: FormData): Promise<FormState> {
@@ -121,6 +128,8 @@ export async function addContract(_: FormState, fd: FormData): Promise<FormState
   if (!dateOk(from)) return { error: "Bitte „gültig ab“ angeben." };
   const weekly = await parseHours(s(fd, "weeklyHours"));
   if (Number.isNaN(weekly)) return { error: "Wochenstunden bitte als 42:30 oder 42,5 eingeben." };
+  const wd = parseWorkdays(fd);
+  if (wd && "error" in wd) return { error: wd.error };
   const last = await prisma.employeeContract.findFirst({ where: { employeeId: id }, orderBy: { validFrom: "desc" } });
   if (last && dbDate(from) <= last.validFrom) return { error: "Das Datum muss nach dem Beginn des aktuellen Vertragsstands liegen." };
   const closed = await prisma.monthlyTimeClosing.findFirst({ where: { employeeId: id, status: "CLOSED", month: { gte: new Date(dbDate(from).getTime() - 31 * 86400000) } } });
@@ -129,7 +138,8 @@ export async function addContract(_: FormState, fd: FormData): Promise<FormState
     const c = await tx.employeeContract.create({
       data: {
         employeeId: id, validFrom: dbDate(from), payModel: last?.payModel ?? "SALARIED", weeklyMinutes: weekly,
-        monthlyTargetMethod: (s(fd, "method") || "WEEKLY_AVERAGE") as MonthlyTargetMethod, workdaysPerWeek: Number(s(fd, "workdaysPerWeek") || "5"),
+        monthlyTargetMethod: (s(fd, "method") || "WEEKLY_AVERAGE") as MonthlyTargetMethod,
+        workdaysMask: wd?.mask ?? last?.workdaysMask ?? 31, workdaysPerWeek: wd?.perWeek ?? Number(s(fd, "workdaysPerWeek") || "5"),
         vacationDaysPerYear: Number(s(fd, "vacationDays") || "0"), note: s(fd, "note") || null, createdById: admin.id,
       },
     });
@@ -137,6 +147,27 @@ export async function addContract(_: FormState, fd: FormData): Promise<FormState
   });
   revalidatePath(`/admin/mitarbeiter/${id}`);
   return { ok: closed ? "Gespeichert. Achtung: Ein betroffener Monat ist bereits abgeschlossen und muss ggf. korrigiert werden." : "Neuer Vertragsstand gespeichert." };
+}
+
+/**
+ * Arbeitstage des aktuellen Vertragsstands berichtigen (z. B. nach der Umstellung, als alle Verträge Mo–Fr hatten).
+ * Wirkt für den ganzen Vertragszeitraum; bereits abgeschlossene Monate behalten ihren gespeicherten Abschluss.
+ */
+export async function setWorkdays(_: FormState, fd: FormData): Promise<FormState> {
+  const admin = await requireAdmin("contracts.manage");
+  const id = s(fd, "id");
+  const wd = parseWorkdays(fd);
+  if (!wd) return { error: "Bitte die Arbeitstage ankreuzen." };
+  if ("error" in wd) return { error: wd.error };
+  const c = await prisma.employeeContract.findFirst({ where: { employeeId: id }, orderBy: { validFrom: "desc" } });
+  if (!c) return { error: "Kein Vertrag vorhanden." };
+  const closed = await prisma.monthlyTimeClosing.findFirst({ where: { employeeId: id, status: "CLOSED", month: { gte: c.validFrom } } });
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.employeeContract.update({ where: { id: c.id }, data: { workdaysMask: wd.mask, workdaysPerWeek: wd.perWeek } });
+    await audit(tx, { actorKind: "ADMIN", actorId: admin.id, action: "CONTRACT_WORKDAYS_CORRECTED", entityType: "EmployeeContract", entityId: c.id, employeeId: id, before: { workdaysMask: c.workdaysMask, workdaysPerWeek: c.workdaysPerWeek }, after: { workdaysMask: after.workdaysMask, workdaysPerWeek: after.workdaysPerWeek } });
+  });
+  revalidatePath(`/admin/mitarbeiter/${id}`);
+  return { ok: closed ? "Gespeichert. Achtung: Es gibt bereits abgeschlossene Monate in diesem Vertragszeitraum – diese bitte unter Monatsabschluss prüfen und ggf. korrigieren." : "Arbeitstage gespeichert." };
 }
 
 export async function addOvertimeRule(_: FormState, fd: FormData): Promise<FormState> {

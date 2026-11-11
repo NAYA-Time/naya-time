@@ -1,5 +1,6 @@
 import { amount } from "../calc/payroll";
 // Excel-Berichte (Woche, Monat, Aushilfenlauf). Zeiten als Excel-Zeitwerte ([h]:mm), damit man in Excel weiterrechnen kann.
+import { capAbsenceByWork } from "../calc/absence";
 import ExcelJS from "exceljs";
 import type { PrismaClient } from "@prisma/client";
 import { FILTER_LABEL as DEPT_LABEL, matchesEmp, matchesFilter, type DeptFilter } from "../dept";
@@ -7,6 +8,14 @@ import { loadMonth } from "../month-data";
 import { sickCounts } from "../sick";
 import { monthBounds } from "../calc/month";
 import { berlinDate, berlinTime, dbDate } from "../time";
+
+/** Abwesenheit nur für die am Tag nicht gearbeitete Zeit (wie Monatsabschluss und Aushilfenabrechnung) */
+function capOwn<A extends { date: Date; creditedMinutes: number }>(abs: A[], sessions: { workDate: Date; status: string; payableMinutes: number }[]): A[] {
+  const worked = new Map<string, number>();
+  for (const s of sessions) if (s.status === "CLOSED") { const k = s.workDate.toISOString().slice(0, 10); worked.set(k, (worked.get(k) ?? 0) + s.payableMinutes); }
+  const capped = capAbsenceByWork(abs.map((a) => ({ date: a.date.toISOString().slice(0, 10), creditedMinutes: a.creditedMinutes })), worked);
+  return abs.map((a, i) => ({ ...a, creditedMinutes: capped[i].creditedMinutes }));
+}
 
 const ABS_LABEL: Record<string, string> = { VACATION: "Urlaub", SICK: "Krank", SICK_CHILD: "Kind krank", SPECIAL_LEAVE: "Sonderurlaub", UNPAID: "Unbezahlt", TIME_OFF_IN_LIEU: "Freizeitausgleich" };
 const FINDING_LABEL: Record<string, string> = { LATE: "Verspätung", LATE_START: "Verspätung", LATE_END: "Länger als geplant", EARLY_START: "Früher gekommen", NO_SHOW: "Nicht erschienen", OFFLINE_UNTRUSTED: "Offline-Zeit unsicher", OFFLINE_REJECTED: "Offline-Buchung abgelehnt", MISSING_CLOCK_OUT: "Ausstempeln fehlt", BREAK_MISSING: "Pause fehlt", MAX_HOURS: "Höchstarbeitszeit", REST_PERIOD: "Ruhezeit", PHOTO_MISSING: "Foto fehlt", OVERRUN: "Länger als geplant", EARLY: "Früher gekommen" };
@@ -93,7 +102,7 @@ export async function weeklyReport(db: PrismaClient, monday: string, filter: Dep
     if (!c && !d.sessions.some((s) => s.employeeId === e.id)) continue;
     const worked = d.sessions.filter((s) => s.employeeId === e.id && s.status === "CLOSED").reduce((a, s) => a + s.payableMinutes, 0);
     const planned = d.shifts.filter((s) => s.employeeId === e.id).reduce((a, s) => a + net(s), 0);
-    const abs = d.absDays.filter((a) => a.absence.employeeId === e.id);
+    const abs = capOwn(d.absDays.filter((a) => a.absence.employeeId === e.id), d.sessions.filter((s) => s.employeeId === e.id));
     const sick = abs.filter((a) => a.absence.type.startsWith("SICK")).reduce((x, a) => x + a.creditedMinutes, 0);
     const vac = abs.filter((a) => !a.absence.type.startsWith("SICK")).reduce((x, a) => x + a.creditedMinutes, 0);
     ov.addRow({
@@ -137,7 +146,7 @@ export async function monthlyReport(db: PrismaClient, month: string, filter: Dep
       const wages = await db.hourlyWageHistory.findMany({ where: { employeeId: e.id } });
       const rate = (day: string) => wages.find((w) => ymd(w.validFrom) <= day && (!w.validTo || ymd(w.validTo) >= day))?.centsPerHour ?? 0;
       const ss = d.sessions.filter((s) => s.employeeId === e.id && s.status === "CLOSED");
-      const ab = d.absDays.filter((a) => a.absence.employeeId === e.id && ["SICK", "VACATION", "SPECIAL_LEAVE"].includes(a.absence.type));
+      const ab = capOwn(d.absDays.filter((a) => a.absence.employeeId === e.id && ["SICK", "VACATION", "SPECIAL_LEAVE"].includes(a.absence.type)), ss);
       // je Tag auf Cent gerundet – genau wie die Aushilfenabrechnung (lib/calc/payroll.ts), damit beide Beträge übereinstimmen
       const gross = [...ss.map((s) => amount(s.payableMinutes, rate(ymd(s.workDate)))), ...ab.map((a) => amount(a.creditedMinutes, rate(ymd(a.date))))].reduce((x, y) => x + y, 0);
       const open = d.sessions.filter((s) => s.employeeId === e.id && s.status !== "CLOSED").length;

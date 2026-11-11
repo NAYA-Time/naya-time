@@ -304,6 +304,25 @@ export default function Terminal() {
     loadEmployees().then((ok) => ok && setScreen({ k: "home" }));
   }, [loadEmployees]);
 
+  // Mitarbeiterliste aktuell halten: neue Mitarbeiter, PIN-Rücksetzung und abgeschlossene Ersteinrichtung
+  // müssen ohne Neustart der App ankommen. Still im Hintergrund – Fehler ändern den Bildschirm nicht.
+  const refreshEmployees = useCallback(async () => {
+    try {
+      const r = await api<{ employees: Emp[] }>("/api/terminal/employees");
+      setEmps(r.employees);
+      rememberEmployees(r.employees);
+    } catch { /* offline oder Serverfehler: letzte bekannte Liste behalten */ }
+  }, []);
+  const screenKind = screen.k;
+  useEffect(() => {
+    if (screenKind === "home" || screenKind === "pick") refreshEmployees();
+    if (screenKind !== "home" && screenKind !== "pick") return;
+    const t = setInterval(refreshEmployees, 60_000);
+    const vis = () => { if (document.visibilityState === "visible") refreshEmployees(); };
+    document.addEventListener("visibilitychange", vis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", vis); };
+  }, [screenKind, refreshEmployees]);
+
   // Offline-Warteschlange regelmäßig nachreichen
   useEffect(() => {
     const run = async () => {

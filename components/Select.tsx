@@ -25,3 +25,23 @@ export function Section({ title, children, hint }: { title: string; children: Re
     </section>
   );
 }
+
+const WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+/** Arbeitstage als Kästchen (Bit 0 = Montag … Bit 6 = Sonntag), Feldname „wd“ */
+export function WeekdayPicker({ mask = 31, hint }: { mask?: number; hint?: string }) {
+  return (
+    <fieldset className="sm:col-span-2">
+      <legend className="mb-2 text-xs tracking-wider text-mute">ARBEITSTAGE</legend>
+      <input type="hidden" name="wdPresent" value="1" />
+      <div className="flex flex-wrap gap-2">
+        {WEEKDAYS.map((d, i) => (
+          <label key={d} className="flex min-h-11 min-w-14 items-center justify-center gap-2 rounded-xl border border-line px-3 text-paper">
+            <input type="checkbox" name="wd" value={i} defaultChecked={((mask >> i) & 1) === 1} className="size-5 accent-[#c8a15c]" />
+            {d}
+          </label>
+        ))}
+      </div>
+      {hint && <p className="mt-2 text-xs text-mute">{hint}</p>}
+    </fieldset>
+  );
+}

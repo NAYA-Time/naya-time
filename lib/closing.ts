@@ -45,6 +45,15 @@ export async function closeEmployeeMonth(adminId: string, employeeId: string, mo
       const prev = await tx.monthlyTimeClosing.findFirst({ where: { employeeId, status: { not: "SUPERSEDED" }, month: dbDate(prevMonth(month) + "-01") } });
       if (!prev) return { ok: false as const, error: `Bitte zuerst ${monthLabel(prevMonth(month))} abschließen. Monate werden lückenlos der Reihe nach abgeschlossen.` };
     }
+    if (!anyEarlier) {
+      // Erster Abschluss: Es darf kein früherer Monat mit Stempelungen oder Abwesenheiten übersprungen werden
+      const [ws, ab] = await Promise.all([
+        tx.workSession.findFirst({ where: { employeeId, workDate: { lt: dbDate(first) } }, orderBy: { workDate: "asc" }, select: { workDate: true } }),
+        tx.absenceDay.findFirst({ where: { date: { lt: dbDate(first) }, absence: { employeeId, status: { not: "CANCELLED" } } }, orderBy: { date: "asc" }, select: { date: true } }),
+      ]);
+      const earliest = [ws?.workDate, ab?.date].filter((d): d is Date => !!d).sort((a, b) => a.getTime() - b.getTime())[0];
+      if (earliest) return { ok: false as const, error: `Es gibt schon Buchungen ab ${monthLabel(earliest.toISOString().slice(0, 7))}. Bitte mit diesem Monat beginnen – sonst würden frühere Monate nie abgerechnet.` };
+    }
     const r = await loadMonth(tx, employeeId, month, decision);
     if (r.blockers.length) return { ok: false as const, error: r.blockers.join(" · ") };
     const account = await tx.workingTimeAccount.upsert({ where: { employeeId }, create: { employeeId, openedAt: dbDate(first) }, update: {} });

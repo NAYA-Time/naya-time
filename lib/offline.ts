@@ -120,10 +120,16 @@ export async function processOfflineBatch(terminalId: string, items: OfflineItem
     if (receivedAt.getTime() - a.effectiveAt.getTime() > OFFLINE_MAX_AGE_H * 3600_000) {
       out.push(await reject(db, terminalId, it, emp.id, a.effectiveAt, `älter als ${OFFLINE_MAX_AGE_H} Std.`)); continue;
     }
+    // PIN-Sperre gilt auch für Offline-Nachträge (sonst ließe sich die Sperre über diesen Weg umgehen).
+    // Maßgeblich ist der aktuelle Stand – vorherige Einträge desselben Stapels können die Sperre ausgelöst haben.
+    const cred = await db.employeeCredential.findUnique({ where: { employeeId: emp.id } });
+    if (cred?.lockedUntil && cred.lockedUntil > new Date()) {
+      out.push(await reject(db, terminalId, it, emp.id, a.effectiveAt, "PIN vorübergehend gesperrt")); continue;
+    }
     if (!(await verifySecret(secret.pin, emp.credential.pinHash))) {
-      const failed = emp.credential.failedAttempts + 1;
-      const lock = lockMinutes(failed);
-      await db.employeeCredential.update({ where: { employeeId: emp.id }, data: { failedAttempts: failed, lockedUntil: lock ? new Date(Date.now() + lock * 60000) : emp.credential.lockedUntil } });
+      const upd = await db.employeeCredential.update({ where: { employeeId: emp.id }, data: { failedAttempts: { increment: 1 } } });
+      const lock = lockMinutes(upd.failedAttempts);
+      if (lock) await db.employeeCredential.update({ where: { employeeId: emp.id }, data: { lockedUntil: new Date(Date.now() + lock * 60000) } });
       out.push(await reject(db, terminalId, it, emp.id, a.effectiveAt, "PIN falsch")); continue;
     }
     try {

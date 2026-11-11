@@ -4,7 +4,7 @@
 // Mehrarbeit: zuerst abgegoltene Stunden (Regel, kein Übertrag), Rest aufs Konto.
 // Defizit: Standard AUTO_BOOKED (Gunnar 08.11.2026) → Minusstunden, Übertrag in den nächsten Monat ("aus Vormonaten").
 // Freizeitausgleich wird angerechnet und zugleich vom Konto abgebucht.
-import { dailyTarget, datesBetween, weekdayBit } from "./absence";
+import { capAbsenceByWork, dailyTarget, datesBetween, weekdayBit } from "./absence";
 import { holidayName } from "../holidays";
 
 export type TargetMethod = "WEEKLY_AVERAGE" | "CALENDAR_EXACT" | "FIXED_MONTHLY";
@@ -59,7 +59,13 @@ export function monthlyAverage(c: Pick<MonthContract, "weeklyMinutes" | "monthly
   return Math.round(((c.weeklyMinutes ?? 0) * 13) / 3);
 }
 
-export function computeMonth(inp: MonthInput): MonthResult {
+export function computeMonth(raw: MonthInput): MonthResult {
+  // Abwesenheit nur für die nicht gearbeitete Zeit des Tages anrechnen (keine Doppelzählung)
+  const workedByDate = new Map<string, number>();
+  for (const s of raw.sessions) if (s.status === "CLOSED") workedByDate.set(s.workDate, (workedByDate.get(s.workDate) ?? 0) + s.payableMinutes);
+  const capped = capAbsenceByWork(raw.absenceDays, workedByDate);
+  const cappedDays = capped.filter((a, i) => a.creditedMinutes !== raw.absenceDays[i].creditedMinutes).length;
+  const inp: MonthInput = { ...raw, absenceDays: capped };
   const { first, last, days } = monthBounds(inp.month);
   const blockers: string[] = [];
   const hints: string[] = [];
@@ -138,6 +144,7 @@ export function computeMonth(inp: MonthInput): MonthResult {
   if (deficit > 0 && planned + absenceCredit < target - 60) {
     hints.push(`Unterplanung: Dienstplan + Abwesenheiten ergeben nur ${hm(planned + absenceCredit)} bei Soll ${hm(target)}. Prüfen, ob die Minusstunden vom Betrieb verursacht sind.`);
   }
+  if (cappedDays > 0) hints.push(`An ${cappedDays} Tag${cappedDays > 1 ? "en" : ""} wurde neben Krankheit/Urlaub gearbeitet – die Abwesenheit zählt dort nur für die nicht gearbeitete Zeit.`);
   if (unpaid > 0) hints.push(`${hm(unpaid)} Std. unbezahlt (Kind krank/unbezahlt) – Soll entsprechend gekürzt, Gehaltskürzung über das Lohnbüro.`);
   if (compensable > 0 && includedLimit === 0) hints.push("Keine abgegoltenen Überstunden hinterlegt – alle Mehrstunden gehen aufs Konto.");
   const c = contractAt(last) ?? inp.contracts[0];

@@ -10,8 +10,8 @@ import { ActionForm, Field } from "@/components/ActionForm";
 import { Check } from "@/components/Select";
 
 const addDays = (ymd: string, n: number) => new Date(Date.parse(ymd + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
-const FIELD: Record<string, string> = { CLOCK_IN: "Beginn", CLOCK_OUT: "Ende", BREAK_MINUTES: "Pause", SESSION_VOID: "Fehlbuchung", PAYABLE_START: "Vergütungsbeginn", ADD_SESSION: "Nachtrag" };
-const show = (field: string, v: string | null) => (v == null ? "–" : field === "BREAK_MINUTES" ? `${v} Min.` : field === "SESSION_VOID" ? (v === "true" ? "ja" : "nein") : berlinTime(new Date(v)));
+const FIELD: Record<string, string> = { CLOCK_IN: "Beginn", CLOCK_OUT: "Ende", BREAK_MINUTES: "Pause", SESSION_VOID: "Fehlbuchung", PAYABLE_START: "Früher Beginn genehmigt", ADD_SESSION: "Nachtrag" };
+const show = (field: string, v: string | null) => (v == null ? "–" : field === "BREAK_MINUTES" ? `${v} Min.` : field === "SESSION_VOID" || field === "PAYABLE_START" ? (v === "true" ? "ja" : "nein") : berlinTime(new Date(v)));
 
 export default async function ZeitenPage({ searchParams }: { searchParams: Promise<{ von?: string; bis?: string; nur?: string }> }) {
   const admin = await requireAdmin("timeclock.view");
@@ -128,6 +128,13 @@ export default async function ZeitenPage({ searchParams }: { searchParams: Promi
                       <Field label="Pause (Min.)" name="breakMinutes" type="number" min={0} defaultValue={currentBreak} />
                     </div>
                     <Field label="Grund (Pflicht)" name="reason" required />
+                    {s.plannedStartAt && inAt < s.plannedStartAt && (
+                      <div className="rounded-lg border border-line px-3 py-2">
+                        <input type="hidden" name="earlyPresent" value="1" />
+                        <Check label={`Früher Beginn genehmigt – Zeit zählt ab ${berlinTime(inAt)} statt ab Dienstbeginn ${berlinTime(s.plannedStartAt)}`} name="early" defaultChecked={s.earlyStartApproved} />
+                        {!s.earlyStartApproved && <p className="text-xs text-warn">Ohne Haken bleiben {Math.round((s.plannedStartAt.getTime() - inAt.getTime()) / 60000)} Min. vor Dienstbeginn unvergütet.</p>}
+                      </div>
+                    )}
                     <Check label="Fehlbuchung – Schicht zählt nicht" name="void" />
                   </ActionForm>
                 )}
