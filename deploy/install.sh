@@ -7,6 +7,7 @@ set -euo pipefail
 ZIEL=/opt/naya-time
 REPO=https://github.com/NAYA-Time/naya-time.git
 BRANCH=${NAYA_BRANCH:-main}
+export GIT_TERMINAL_PROMPT=0  # nie nach GitHub-Zugangsdaten fragen
 
 [ "$(id -u)" -eq 0 ] || { echo "Bitte als root ausführen." >&2; exit 1; }
 cloud-init status --wait >/dev/null 2>&1 || true
@@ -40,9 +41,9 @@ fi
 
 if [ -d "$ZIEL/.git" ]; then
   echo "==> Hole die neueste Version …"
-  git -C "$ZIEL" fetch -q origin "$BRANCH"
-  git -C "$ZIEL" checkout -q "$BRANCH"
-  git -C "$ZIEL" pull -q --ff-only origin "$BRANCH"
+  if ! { git -C "$ZIEL" fetch -q origin "$BRANCH" && git -C "$ZIEL" checkout -q "$BRANCH" && git -C "$ZIEL" pull -q --ff-only origin "$BRANCH"; }; then
+    echo "!! GitHub nicht erreichbar oder Stand abweichend – nutze die bereits vorhandene Version in $ZIEL."
+  fi
 else
   echo "==> Lade NAYA TIME herunter …"
   git clone -q --branch "$BRANCH" "$REPO" "$ZIEL"

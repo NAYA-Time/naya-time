@@ -16,9 +16,10 @@ export async function accountBalanceBefore(db: Db, employeeId: string, month: st
   return r._sum.minutes ?? 0;
 }
 
-export async function loadMonth(db: Db, employeeId: string, month: string, decision?: Decision, today = berlinDate(new Date())): Promise<MonthResult> {
+/** until: nur bis einschließlich diesem Tag rechnen (laufender Stand, Soll anteilig wie bei Austritt) */
+export async function loadMonth(db: Db, employeeId: string, month: string, decision?: Decision, today = berlinDate(new Date()), until?: string): Promise<MonthResult> {
   const { first, last } = monthBounds(month);
-  const range = { gte: dbDate(first), lte: dbDate(last) };
+  const range = { gte: dbDate(first), lte: dbDate(until && until < last ? until : last) };
   const [emp, sessions, absenceDays, shifts, balanceBefore, holidaySetting] = await Promise.all([
     db.employee.findUniqueOrThrow({ where: { id: employeeId }, include: { contracts: true, overtimeRules: true } }),
     db.workSession.findMany({ where: { employeeId, workDate: range }, select: { workDate: true, status: true, payableMinutes: true } }),
@@ -29,7 +30,7 @@ export async function loadMonth(db: Db, employeeId: string, month: string, decis
   ]);
   const hr = holidaySetting?.value;
   return computeMonth({
-    month, today, entryDate: ymd(emp.entryDate), exitDate: emp.exitDate ? ymd(emp.exitDate) : null,
+    month, today, entryDate: ymd(emp.entryDate), exitDate: until && (!emp.exitDate || until < ymd(emp.exitDate)) ? until : emp.exitDate ? ymd(emp.exitDate) : null,
     contracts: emp.contracts.map((c) => ({ ...c, validFrom: ymd(c.validFrom), validTo: c.validTo ? ymd(c.validTo) : null })),
     overtimeRules: emp.overtimeRules.map((r) => ({ validFrom: ymd(r.validFrom), validTo: r.validTo ? ymd(r.validTo) : null, includedMinutesPerMonth: r.includedMinutesPerMonth })),
     sessions: sessions.map((s) => ({ workDate: ymd(s.workDate), status: s.status, payableMinutes: s.payableMinutes })),
@@ -40,3 +41,26 @@ export async function loadMonth(db: Db, employeeId: string, month: string, decis
   });
 }
 
+
+const addDays = (d: string, n: number) => new Date(Date.parse(d + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+const nextMonth = (m: string) => { const [y, mo] = m.split("-").map(Number); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`; };
+
+/**
+ * Laufender Stundenkonto-Stand bis einschließlich gestern (Festangestellte): abgeschlossene Monate + noch offene Monate anteilig.
+ * null = kein Stundenkonto (Aushilfe) oder noch kein ganzer Tag beschäftigt.
+ */
+export async function runningBalance(db: Db, employeeId: string, today = berlinDate(new Date())): Promise<number | null> {
+  const until = addDays(today, -1);
+  const emp = await db.employee.findUniqueOrThrow({ where: { id: employeeId }, include: { contracts: true } });
+  const salaried = emp.contracts.some((c) => c.payModel === "SALARIED" && ymd(c.validFrom) <= until && (!c.validTo || ymd(c.validTo) >= until));
+  if (!salaried || ymd(emp.entryDate) > until) return null;
+  const lastClosed = await db.monthlyTimeClosing.findFirst({ where: { employeeId, status: "CLOSED" }, orderBy: { month: "desc" } });
+  const endMonth = until.slice(0, 7);
+  let m = lastClosed ? nextMonth(ymd(lastClosed.month).slice(0, 7)) : ymd(emp.entryDate).slice(0, 7);
+  let balance = await accountBalanceBefore(db, employeeId, m);
+  for (let i = 0; m <= endMonth && i < 6; m = nextMonth(m), i++) {
+    const r = await loadMonth(db, employeeId, m, undefined, today, until);
+    balance += r.accountChange;
+  }
+  return balance;
+}

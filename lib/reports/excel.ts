@@ -1,14 +1,24 @@
+import { amount } from "../calc/payroll";
 // Excel-Berichte (Woche, Monat, Aushilfenlauf). Zeiten als Excel-Zeitwerte ([h]:mm), damit man in Excel weiterrechnen kann.
+import { capAbsenceByWork } from "../calc/absence";
 import ExcelJS from "exceljs";
 import type { PrismaClient } from "@prisma/client";
-import { matchesFilter, type DeptFilter } from "../dept";
+import { FILTER_LABEL as DEPT_LABEL, matchesEmp, matchesFilter, type DeptFilter } from "../dept";
 import { loadMonth } from "../month-data";
+import { sickCounts } from "../sick";
 import { monthBounds } from "../calc/month";
 import { berlinDate, berlinTime, dbDate } from "../time";
 
-const DEPT_LABEL: Record<DeptFilter, string> = { ALL: "Alle", KUECHE: "Küche", SERVICE: "Service" };
+/** Abwesenheit nur für die am Tag nicht gearbeitete Zeit (wie Monatsabschluss und Aushilfenabrechnung) */
+function capOwn<A extends { date: Date; creditedMinutes: number }>(abs: A[], sessions: { workDate: Date; status: string; payableMinutes: number }[]): A[] {
+  const worked = new Map<string, number>();
+  for (const s of sessions) if (s.status === "CLOSED") { const k = s.workDate.toISOString().slice(0, 10); worked.set(k, (worked.get(k) ?? 0) + s.payableMinutes); }
+  const capped = capAbsenceByWork(abs.map((a) => ({ date: a.date.toISOString().slice(0, 10), creditedMinutes: a.creditedMinutes })), worked);
+  return abs.map((a, i) => ({ ...a, creditedMinutes: capped[i].creditedMinutes }));
+}
+
 const ABS_LABEL: Record<string, string> = { VACATION: "Urlaub", SICK: "Krank", SICK_CHILD: "Kind krank", SPECIAL_LEAVE: "Sonderurlaub", UNPAID: "Unbezahlt", TIME_OFF_IN_LIEU: "Freizeitausgleich" };
-const FINDING_LABEL: Record<string, string> = { LATE: "Verspätung", NO_SHOW: "Nicht erschienen", MISSING_CLOCK_OUT: "Ausstempeln fehlt", BREAK_MISSING: "Pause fehlt", MAX_HOURS: "Höchstarbeitszeit", REST_PERIOD: "Ruhezeit", PHOTO_MISSING: "Foto fehlt", OVERRUN: "Länger als geplant", EARLY: "Früher gekommen" };
+const FINDING_LABEL: Record<string, string> = { LATE: "Verspätung", LATE_START: "Verspätung", LATE_END: "Länger als geplant", EARLY_START: "Früher gekommen", NO_SHOW: "Nicht erschienen", OFFLINE_UNTRUSTED: "Offline-Zeit unsicher", OFFLINE_REJECTED: "Offline-Buchung abgelehnt", MISSING_CLOCK_OUT: "Ausstempeln fehlt", BREAK_MISSING: "Pause fehlt", MAX_HOURS: "Höchstarbeitszeit", REST_PERIOD: "Ruhezeit", PHOTO_MISSING: "Foto fehlt", OVERRUN: "Länger als geplant", EARLY: "Früher gekommen" };
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const de = (s: string) => `${s.slice(8)}.${s.slice(5, 7)}.${s.slice(0, 4)}`;
 const t = (min: number) => min / 1440; // Minuten → Excel-Tagesbruchteil
@@ -35,7 +45,7 @@ async function rangeData(db: PrismaClient, from: string, to: string, filter: Dep
     db.absenceDay.findMany({ where: { date: range, absence: { status: { not: "CANCELLED" } } }, include: { absence: true } }),
     db.complianceFinding.findMany({ where: { workDate: range }, orderBy: { workDate: "asc" } }),
   ]);
-  const visible = emps.filter((e) => matchesFilter(filter, e.primaryDept) || sessions.some((s) => s.employeeId === e.id && matchesFilter(filter, s.department)));
+  const visible = emps.filter((e) => matchesEmp(filter, e) || sessions.some((s) => s.employeeId === e.id && matchesFilter(filter, s.department)));
   const ids = new Set(visible.map((e) => e.id));
   return {
     emps: visible, empById: new Map(emps.map((e) => [e.id, e])),
@@ -92,7 +102,7 @@ export async function weeklyReport(db: PrismaClient, monday: string, filter: Dep
     if (!c && !d.sessions.some((s) => s.employeeId === e.id)) continue;
     const worked = d.sessions.filter((s) => s.employeeId === e.id && s.status === "CLOSED").reduce((a, s) => a + s.payableMinutes, 0);
     const planned = d.shifts.filter((s) => s.employeeId === e.id).reduce((a, s) => a + net(s), 0);
-    const abs = d.absDays.filter((a) => a.absence.employeeId === e.id);
+    const abs = capOwn(d.absDays.filter((a) => a.absence.employeeId === e.id), d.sessions.filter((s) => s.employeeId === e.id));
     const sick = abs.filter((a) => a.absence.type.startsWith("SICK")).reduce((x, a) => x + a.creditedMinutes, 0);
     const vac = abs.filter((a) => !a.absence.type.startsWith("SICK")).reduce((x, a) => x + a.creditedMinutes, 0);
     ov.addRow({
@@ -136,8 +146,9 @@ export async function monthlyReport(db: PrismaClient, month: string, filter: Dep
       const wages = await db.hourlyWageHistory.findMany({ where: { employeeId: e.id } });
       const rate = (day: string) => wages.find((w) => ymd(w.validFrom) <= day && (!w.validTo || ymd(w.validTo) >= day))?.centsPerHour ?? 0;
       const ss = d.sessions.filter((s) => s.employeeId === e.id && s.status === "CLOSED");
-      const ab = d.absDays.filter((a) => a.absence.employeeId === e.id && ["SICK", "VACATION", "SPECIAL_LEAVE"].includes(a.absence.type));
-      const gross = Math.round([...ss.map((s) => (s.payableMinutes * rate(ymd(s.workDate))) / 60), ...ab.map((a) => (a.creditedMinutes * rate(ymd(a.date))) / 60)].reduce((x, y) => x + y, 0));
+      const ab = capOwn(d.absDays.filter((a) => a.absence.employeeId === e.id && ["SICK", "VACATION", "SPECIAL_LEAVE"].includes(a.absence.type)), ss);
+      // je Tag auf Cent gerundet – genau wie die Aushilfenabrechnung (lib/calc/payroll.ts), damit beide Beträge übereinstimmen
+      const gross = [...ss.map((s) => amount(s.payableMinutes, rate(ymd(s.workDate)))), ...ab.map((a) => amount(a.creditedMinutes, rate(ymd(a.date))))].reduce((x, y) => x + y, 0);
       const open = d.sessions.filter((s) => s.employeeId === e.id && s.status !== "CLOSED").length;
       aus.addRow({ name: `${e.lastName}, ${e.firstName}`, dept: e.primaryDept.name, hours: t(ss.reduce((a, s) => a + s.payableMinutes, 0)), abs: t(ab.reduce((a, x) => a + x.creditedMinutes, 0)), gross: gross / 100, note: open ? `${open} Schicht(en) ohne Ausstempeln nicht enthalten` : "Ausgezahlt wird über die Aushilfenabrechnung (Stichtag)" });
     }
@@ -164,3 +175,48 @@ export async function payrollReport(db: PrismaClient, periodId: string) {
 }
 
 export const today = () => berlinDate(new Date());
+
+const CERT_LABEL: Record<string, string> = { UNKNOWN: "noch offen", EAU_RETRIEVED: "eAU abgerufen", SUBMITTED: "vorgelegt", NOT_REQUIRED: "nicht erforderlich" };
+
+/** Krankheitsliste für einen Zeitraum, nach Mitarbeitern sortiert (ohne Diagnosen – die werden nie gespeichert) */
+export async function sickReport(db: PrismaClient, from: string, to: string, filter: DeptFilter) {
+  const absences = await db.absence.findMany({
+    where: { type: { in: ["SICK", "SICK_CHILD"] }, status: { not: "CANCELLED" }, startDate: { lte: dbDate(to) }, endDate: { gte: dbDate(from) } },
+    include: { employee: { include: { primaryDept: { include: { parent: true } } } }, days: true, sickLeave: true },
+  });
+  const rows = absences
+    .filter((a) => matchesEmp(filter, a.employee))
+    .sort((a, b) => a.employee.lastName.localeCompare(b.employee.lastName, "de") || a.employee.firstName.localeCompare(b.employee.firstName, "de") || a.startDate.getTime() - b.startDate.getTime());
+  const wb = new ExcelJS.Workbook();
+  meta(wb);
+  const sum = sheet(wb, "Nach Mitarbeitern", [
+    { header: "Mitarbeiter", key: "name", width: 24 }, { header: "Abteilung", key: "dept" }, { header: "Krankmeldungen", key: "count", width: 16 },
+    { header: "Krankheitstage", key: "sickDays", width: 15 }, { header: "davon Kind krank", key: "childDays", width: 16 }, { header: "Angerechnet", key: "credit", time: true }, { header: "AU offen", key: "open", width: 10 },
+    { header: "Krank im lfd. Jahr", key: "yearDays", width: 17 }, { header: "Krank seit Eintritt", key: "totalDays", width: 18 }, { header: "Eintritt", key: "entry", width: 12 },
+  ]);
+  const counts = await sickCounts([...new Set(rows.map((a) => a.employeeId))], to);
+  const list = sheet(wb, "Einzelne Krankmeldungen", [
+    { header: "Mitarbeiter", key: "name", width: 24 }, { header: "Abteilung", key: "dept" }, { header: "Art", key: "type", width: 12 }, { header: "Von", key: "from", width: 12 },
+    { header: "Bis", key: "to", width: 12 }, { header: "Tage im Zeitraum", key: "days", width: 16 }, { header: "Angerechnet", key: "credit", time: true }, { header: "AU-Bescheinigung", key: "cert", width: 18 },
+  ]);
+  // Kalendertage innerhalb des gewählten Zeitraums (eine Krankmeldung kann über den Zeitraum hinausgehen)
+  const daysIn = (a: (typeof rows)[number]) => {
+    const s = Math.max(Date.parse(ymd(a.startDate)), Date.parse(from)), e = Math.min(Date.parse(ymd(a.endDate)), Date.parse(to));
+    return Math.max(0, Math.round((e - s) / 86400000) + 1);
+  };
+  const creditIn = (a: (typeof rows)[number]) => a.days.filter((d) => ymd(d.date) >= from && ymd(d.date) <= to).reduce((x, d) => x + d.creditedMinutes, 0);
+  const byEmp = new Map<string, typeof rows>();
+  for (const a of rows) byEmp.set(a.employeeId, [...(byEmp.get(a.employeeId) ?? []), a]);
+  for (const [, as] of byEmp) {
+    const e = as[0].employee;
+    sum.addRow({
+      name: `${e.lastName}, ${e.firstName}`, dept: e.primaryDept.name, count: as.length,
+      sickDays: as.filter((a) => a.type === "SICK").reduce((x, a) => x + daysIn(a), 0), childDays: as.filter((a) => a.type === "SICK_CHILD").reduce((x, a) => x + daysIn(a), 0),
+      credit: t(as.reduce((x, a) => x + creditIn(a), 0)), open: as.filter((a) => a.type === "SICK" && (a.sickLeave?.certificateStatus ?? "UNKNOWN") === "UNKNOWN").length,
+      yearDays: counts.get(e.id)?.sickYear ?? 0, totalDays: counts.get(e.id)?.sickTotal ?? 0, entry: de(ymd(e.entryDate)),
+    });
+    for (const a of as) list.addRow({ name: `${e.lastName}, ${e.firstName}`, dept: e.primaryDept.name, type: ABS_LABEL[a.type], from: de(ymd(a.startDate)), to: de(ymd(a.endDate)), days: daysIn(a), credit: t(creditIn(a)), cert: a.type === "SICK" ? CERT_LABEL[a.sickLeave?.certificateStatus ?? "UNKNOWN"] ?? "–" : "–" });
+  }
+  if (!rows.length) sum.addRow({ name: "Keine Krankmeldungen in diesem Zeitraum" });
+  return { wb, fileName: `NAYA-TIME_Krankheit_${from}_bis_${to}_${DEPT_LABEL[filter]}.xlsx`, periodStart: from, periodEnd: to, count: rows.length };
+}

@@ -7,6 +7,7 @@ import { requireAdmin } from "./admin-auth";
 import { hashSecret, randomToken } from "./crypto";
 import { ADD_SESSION_PERMISSION } from "./corrections";
 import type { FormState } from "./admin-actions-auth";
+import { OWNER_ONLY_PERMISSIONS } from "./permissions";
 
 /** Fotofunktion ein/aus und Löschfrist (Tage). Jede Änderung der Freigabe wird als neuer Datensatz dokumentiert. */
 export async function savePhotoSettings(_: FormState, fd: FormData): Promise<FormState> {
@@ -67,4 +68,25 @@ export async function createAdminInvite(_: FormState, fd: FormData): Promise<For
   const h = await headers();
   const base = process.env.APP_URL ?? `${h.get("x-forwarded-proto") ?? "http"}://${h.get("host")}`;
   return { ok: `Einrichtungslink für „${role.name}“ (einmalig, 24 Std. gültig, nur persönlich weitergeben): ${base}/admin/setup?token=${token}` };
+}
+
+/** Rechte einer Person einzeln festlegen (nur Inhaber). Häkchen = darf; Unterschied zur Rolle wird als Einzelfreigabe/-sperre gespeichert. */
+export async function setAdminPermissions(_: FormState, fd: FormData): Promise<FormState> {
+  const admin = await requireAdmin("admins.manage");
+  if (admin.roleKey !== "OWNER") return { error: "Rechte darf nur der Inhaber vergeben." };
+  const id = String(fd.get("id"));
+  const u = await prisma.adminUser.findUniqueOrThrow({ where: { id }, include: { role: { include: { permissions: true } } } });
+  if (u.role.key === "OWNER") return { error: "Der Inhaber hat immer alle Rechte." };
+  const all = (await prisma.permission.findMany()).map((p) => p.key).filter((k) => !OWNER_ONLY_PERMISSIONS.includes(k));
+  const wanted = new Set(fd.getAll("perm").map(String).filter((k) => all.includes(k)));
+  const fromRole = new Set(u.role.permissions.map((p) => p.permissionKey));
+  const extra = all.filter((k) => wanted.has(k) && !fromRole.has(k));
+  const revoked = [...fromRole].filter((k) => !wanted.has(k));
+  await prisma.$transaction(async (tx) => {
+    await tx.adminUser.update({ where: { id }, data: { extraPermissions: extra, revokedPermissions: revoked } });
+    await tx.session.updateMany({ where: { adminUserId: id, kind: "ADMIN" }, data: { reauthAt: null } }).catch(() => undefined);
+    await audit(tx, { actorKind: "ADMIN", actorId: admin.id, action: "ADMIN_RIGHT_CHANGED", entityType: "AdminUser", entityId: id, before: { extra: u.extraPermissions, revoked: u.revokedPermissions }, after: { extra, revoked } });
+  });
+  revalidatePath("/admin/administratoren");
+  return { ok: `Rechte für ${u.name} gespeichert. Sie gelten ab dem nächsten Seitenaufruf.` };
 }

@@ -9,7 +9,8 @@ export async function correctSessionAction(_: FormState, fd: FormData): Promise<
   const brk = String(fd.get("breakMinutes") ?? "").trim();
   const r = await correctSession(admin.id, String(fd.get("id")), {
     clockIn: String(fd.get("clockIn") ?? "") || undefined, clockOut: String(fd.get("clockOut") ?? "") || undefined,
-    breakMinutes: brk === "" ? null : Number(brk), voidSession: fd.get("void") === "on", reason: String(fd.get("reason") ?? "").slice(0, 300),
+    breakMinutes: brk === "" ? null : Number(brk), voidSession: fd.get("void") === "on",
+    earlyStart: fd.has("earlyPresent") ? fd.get("early") === "on" : undefined, reason: String(fd.get("reason") ?? "").slice(0, 300),
   });
   revalidatePath("/admin/zeiten");
   revalidatePath("/admin/monatsabschluss");

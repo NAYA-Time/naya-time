@@ -6,7 +6,7 @@ import { dateDe } from "@/lib/labels";
 import { berlinDate } from "@/lib/time";
 import { Section } from "@/components/Select";
 
-const TYPE: Record<string, string> = { WEEKLY: "Wochenbericht", MONTHLY: "Monatsbericht", PAYROLL_HOURLY: "Aushilfenabrechnung" };
+const TYPE: Record<string, string> = { WEEKLY: "Wochenbericht", MONTHLY: "Monatsbericht", PAYROLL_HOURLY: "Aushilfenabrechnung", SICK_LIST: "Krankheitsliste" };
 const DEPT: Record<string, string> = { ALL: "Alle", KUECHE: "Küche", SERVICE: "Service" };
 const input = "min-h-12 rounded-xl border border-line bg-ink px-4 text-base text-paper";
 const btn = "min-h-12 rounded-xl bg-gold px-5 font-semibold text-ink";

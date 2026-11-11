@@ -5,6 +5,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
+# Der Server hat nur 1 GB Arbeitsspeicher: Node würde sich beim Bauen sonst auf ca. 460 MB begrenzen und abbrechen
+# ("JavaScript heap out of memory"). Mit dieser Grenze darf der Bau die Auslagerungsdatei (Swap) mitbenutzen.
+# Gilt nur für diese Bau-Stufe, nicht für die laufende App.
+ENV NODE_OPTIONS=--max-old-space-size=1536 NEXT_TELEMETRY_DISABLED=1
 RUN npx prisma generate && npm run build
 
 FROM node:22-bookworm-slim

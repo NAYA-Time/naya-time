@@ -30,13 +30,12 @@ export async function POST(req: Request) {
     }
 
     if (!(await verifySecret(pin, cred.pinHash))) {
-      const failed = cred.failedAttempts + 1;
-      const lock = lockMinutes(failed);
+      let failed = 0, lock = 0;
       await prisma.$transaction(async (tx) => {
-        await tx.employeeCredential.update({
-          where: { employeeId: emp.id },
-          data: { failedAttempts: failed, lockedUntil: lock ? new Date(Date.now() + lock * 60000) : null },
-        });
+        // Zähler in der Datenbank erhöhen (nicht aus dem gelesenen Wert rechnen), damit gleichzeitige Versuche alle zählen
+        failed = (await tx.employeeCredential.update({ where: { employeeId: emp.id }, data: { failedAttempts: { increment: 1 } } })).failedAttempts;
+        lock = lockMinutes(failed);
+        if (lock) await tx.employeeCredential.update({ where: { employeeId: emp.id }, data: { lockedUntil: new Date(Date.now() + lock * 60000) } });
         if (lock) await audit(tx, { actorKind: "TERMINAL", actorId: device.id, action: "PIN_LOCKED", entityType: "Employee", entityId: emp.id, employeeId: emp.id, after: { failed, lockMinutes: lock }, ip });
       });
       throw new HttpError(401, lock ? `PIN falsch. Aus Sicherheitsgründen ${lock} Min. gesperrt.` : "Name oder PIN falsch.");

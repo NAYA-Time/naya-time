@@ -4,11 +4,12 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { addShift, copyPreviousWeek, deleteShiftQuick, mondayOf, publishWeek, saveDefaultShift } from "@/lib/admin-actions-schedule";
 import { defaultShift } from "@/lib/schedule-defaults";
 import { checkPlan } from "@/lib/calc/schedule-checks";
-import { currentDeptFilter, matchesFilter } from "@/lib/dept";
+import { currentDeptFilter, matchesEmp, matchesFilter } from "@/lib/dept";
 import { holidayName } from "@/lib/holidays";
 import { berlinDate, berlinTime, dbDate, fmtMinutes, minutesBetween } from "@/lib/time";
 import { ActionForm, Field } from "@/components/ActionForm";
 import { Section, Select } from "@/components/Select";
+import { PlanPhotoImport } from "@/components/PlanPhotoImport";
 
 const addDays = (ymd: string, n: number) => new Date(Date.parse(ymd + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 const WD = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
@@ -39,7 +40,7 @@ export default async function DienstplanPage({ searchParams }: { searchParams: P
   ]);
 
   // Abteilungsfilter: Mitarbeiter mit Hauptabteilung im Filter oder mit einem Dienst in einer passenden Abteilung
-  const visible = emps.filter((e) => matchesFilter(filter, e.primaryDept) || shifts.some((s) => s.employeeId === e.id && matchesFilter(filter, s.department)));
+  const visible = emps.filter((e) => matchesEmp(filter, e) || shifts.some((s) => s.employeeId === e.id && matchesFilter(filter, s.department)));
   const visibleIds = new Set(visible.map((e) => e.id));
 
   const timed = shifts.filter((s) => s.startAt && s.endAt && s.kind === "WORK");
@@ -147,6 +148,12 @@ export default async function DienstplanPage({ searchParams }: { searchParams: P
           <ul className="grid gap-1.5 text-sm">
             {warnings.map((w, i) => <li key={i}><span className="font-semibold">{empName(w.employeeId)}:</span> <span className="text-warn">{w.message}</span></li>)}
           </ul>
+        </Section>
+      )}
+
+      {canManage && (
+        <Section title="Dienstplan per Foto übernehmen" hint="Foto vom Papierplan aufnehmen. Die Zeiten werden ausgelesen und erscheinen zuerst in einer Prüftabelle – gespeichert wird erst nach deiner Bestätigung.">
+          <PlanPhotoImport monday={monday} defLabel={defLabel} employees={emps.map((e) => ({ id: e.id, label: `${e.firstName} ${e.lastName}` }))} />
         </Section>
       )}
 

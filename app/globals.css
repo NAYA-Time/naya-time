@@ -12,6 +12,7 @@
   --color-good: #5fbf8f;
   --color-bad: #e0705f;
   --color-warn: #e3a64c;
+  --color-info: #6fb3ef; /* geänderte Dienste */
   --font-display: "Didot", "Bodoni 72", "Times New Roman", serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
 }

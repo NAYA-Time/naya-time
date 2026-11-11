@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/admin-auth";
 import { createEmployee } from "@/lib/admin-actions-employees";
 import { ActionForm, Field } from "@/components/ActionForm";
-import { Check, Section, Select } from "@/components/Select";
+import { Check, Section, Select, WeekdayPicker } from "@/components/Select";
 import { EMPLOYMENT_LABEL } from "@/lib/labels";
 import { berlinDate } from "@/lib/time";
 
@@ -31,7 +31,7 @@ export default async function NewEmployee() {
             <Select label="Unterabteilung" name="subDeptId" options={sub} />
             <Select label="Beschäftigungsart" name="employmentType" options={Object.entries(EMPLOYMENT_LABEL)} defaultValue="FESTANGESTELLT" />
             <Field label="Wochenstunden (z. B. 42:30)" name="weeklyHours" defaultValue="42:30" hint="Bei Aushilfen ohne feste Stunden leer lassen." />
-            <Field label="Arbeitstage pro Woche" name="workdaysPerWeek" type="number" defaultValue={5} min={1} />
+            <WeekdayPicker hint="Die üblichen Tage ankreuzen. Danach richten sich Urlaub und Krankheit an Tagen ohne Dienstplan. Ein eingeplanter Dienst zählt immer." />
             <Field label="Urlaubstage pro Jahr" name="vacationDays" type="number" defaultValue={26} min={0} />
           </div>
         </Section>

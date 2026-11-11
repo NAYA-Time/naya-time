@@ -1,5 +1,6 @@
 "use server";
 import { revalidatePath } from "next/cache";
+import { dayLabel, hadPlanInWeek, recordDayChange } from "./shift-changes";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { audit } from "./audit";
@@ -39,8 +40,10 @@ export async function addShift(_: FormState, fd: FormData): Promise<FormState> {
   const monday = await mondayOf(date);
   await prisma.$transaction(async (tx) => {
     const sched = await weekSchedule(tx, monday, admin.id);
+    const before = await dayLabel(tx, employeeId, date), had = await hadPlanInWeek(tx, employeeId, date);
     const sh = await tx.scheduledShift.create({ data: { scheduleId: sched.id, employeeId, departmentId, workDate: dbDate(date), startAt, endAt, plannedBreakMinutes: brk, note: String(fd.get("note") ?? "") || null } });
     await audit(tx, { actorKind: "ADMIN", actorId: admin.id, action: "SHIFT_CREATED", entityType: "ScheduledShift", entityId: sh.id, employeeId, after: { date, start, end, brk } });
+    await recordDayChange(tx, employeeId, date, before, had);
   });
   revalidatePath("/admin/dienstplan");
   return { ok: `Dienst eingetragen: ${emp.firstName}, ${date.split("-").reverse().join(".")} ${start}–${end}.` };
@@ -50,7 +53,10 @@ export async function deleteShift(_: FormState, fd: FormData): Promise<FormState
   const admin = await requireAdmin("schedule.manage");
   const id = String(fd.get("id"));
   await prisma.$transaction(async (tx) => {
+    const old = await tx.scheduledShift.findUniqueOrThrow({ where: { id } });
+    const day = berlinDate(old.workDate), before = await dayLabel(tx, old.employeeId, day);
     const s = await tx.scheduledShift.update({ where: { id }, data: { deletedAt: new Date() } }); // weich gelöscht, Historie bleibt
+    await recordDayChange(tx, s.employeeId, day, before, true);
     await audit(tx, { actorKind: "ADMIN", actorId: admin.id, action: "SHIFT_DELETED", entityType: "ScheduledShift", entityId: id, employeeId: s.employeeId, before: { start: s.startAt, end: s.endAt } });
   });
   revalidatePath("/admin/dienstplan");

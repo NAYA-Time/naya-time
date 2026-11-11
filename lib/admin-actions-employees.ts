@@ -1,16 +1,19 @@
 "use server";
+import { parseWorkdays } from "./workdays";
 import { randomInt } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import type { EmploymentType, MonthlyTargetMethod } from "@prisma/client";
 import { prisma } from "./db";
+import { minimumWageCents } from "./calc/minwage";
 import { audit } from "./audit";
 import { hashSecret } from "./crypto";
 import { requireAdmin } from "./admin-auth";
 import { dbDate } from "./time";
 import type { FormState } from "./admin-actions-auth";
 
-const TYPES: EmploymentType[] = ["FESTANGESTELLT", "MINIJOB", "KURZFRISTIG", "TEILZEIT_STUNDENLOHN", "SONSTIGE_AUSHILFE"];
+const TYPES: EmploymentType[] = ["FESTANGESTELLT", "MINIJOB", "KURZFRISTIG", "TEILZEIT_STUNDENLOHN", "SONSTIGE_AUSHILFE", "EXTERN"];
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 const dateOk = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
 
@@ -51,6 +54,8 @@ export async function createEmployee(_: FormState, fd: FormData): Promise<FormSt
   if (hourly && !admin.permissions.has("wages.manage")) return { error: "Dir fehlt die Berechtigung, Stundenlöhne festzulegen." };
   const included = Number(s(fd, "includedHours") || "0");
   const email = s(fd, "email") || null;
+  const wd = parseWorkdays(fd);
+  if (wd && "error" in wd) return { error: wd.error };
 
   const setup = await newSetupCode();
   const emp = await prisma.$transaction(async (tx) => {
@@ -61,7 +66,8 @@ export async function createEmployee(_: FormState, fd: FormData): Promise<FormSt
         contracts: {
           create: {
             validFrom: dbDate(entryDate), payModel: hourly ? "HOURLY" : "SALARIED", weeklyMinutes: weekly,
-            workdaysPerWeek: Number(s(fd, "workdaysPerWeek") || "5"), vacationDaysPerYear: Number(s(fd, "vacationDays") || "0"), createdById: admin.id,
+            workdaysMask: wd?.mask ?? 31, workdaysPerWeek: wd?.perWeek ?? Number(s(fd, "workdaysPerWeek") || "5"),
+            vacationDaysPerYear: Number(s(fd, "vacationDays") || "0"), createdById: admin.id,
           },
         },
         departmentHistory: { create: { departmentId: primaryDeptId, validFrom: dbDate(entryDate) } },
@@ -80,7 +86,9 @@ export async function createEmployee(_: FormState, fd: FormData): Promise<FormSt
     await audit(tx, { actorKind: "ADMIN", actorId: admin.id, action: "EMPLOYEE_CREATED", entityType: "Employee", entityId: e.id, employeeId: e.id, after: { firstName, lastName, personnelNumber, employmentType } });
     return e;
   });
-  redirect(`/admin/mitarbeiter/${emp.id}?code=${setup.code}`);
+  // Einrichtungscode nicht in die Adresszeile (Browserverlauf), sondern einmalig per kurzlebigem Cookie zur Folgeseite
+  (await cookies()).set("naya_setup_code", `${emp.id}:${setup.code}`, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict", path: "/admin/mitarbeiter", maxAge: 120 });
+  redirect(`/admin/mitarbeiter/${emp.id}`);
 }
 
 export async function updateEmployee(_: FormState, fd: FormData): Promise<FormState> {
@@ -92,6 +100,12 @@ export async function updateEmployee(_: FormState, fd: FormData): Promise<FormSt
     email: s(fd, "email") || null, position: s(fd, "position") || null, subDeptId: s(fd, "subDeptId") || null,
     exitDate: dateOk(s(fd, "exitDate")) ? dbDate(s(fd, "exitDate")) : null, showOnTerminal: fd.get("showOnTerminal") === "on",
   };
+  // Beschäftigungsart: nur zwischen den Stundenlohn-Arten wechselbar (Festangestellt hat Monatsvertrag/Stundenkonto)
+  const newType = s(fd, "employmentType") as EmploymentType;
+  if (newType && newType !== before.employmentType) {
+    if (!TYPES.includes(newType) || newType === "FESTANGESTELLT" || before.employmentType === "FESTANGESTELLT") return { error: "Zwischen Festangestellt und Stundenlohn bitte über einen neuen Vertrag wechseln – hier nur zwischen den Aushilfs-Arten und Extern." };
+    (data as Record<string, unknown>).employmentType = newType;
+  }
   const newDept = s(fd, "primaryDeptId");
   const deptFrom = s(fd, "deptValidFrom");
   if (newDept !== before.primaryDeptId && !dateOk(deptFrom)) return { error: "Für den Abteilungswechsel bitte „gültig ab“ angeben." };
@@ -114,6 +128,8 @@ export async function addContract(_: FormState, fd: FormData): Promise<FormState
   if (!dateOk(from)) return { error: "Bitte „gültig ab“ angeben." };
   const weekly = await parseHours(s(fd, "weeklyHours"));
   if (Number.isNaN(weekly)) return { error: "Wochenstunden bitte als 42:30 oder 42,5 eingeben." };
+  const wd = parseWorkdays(fd);
+  if (wd && "error" in wd) return { error: wd.error };
   const last = await prisma.employeeContract.findFirst({ where: { employeeId: id }, orderBy: { validFrom: "desc" } });
   if (last && dbDate(from) <= last.validFrom) return { error: "Das Datum muss nach dem Beginn des aktuellen Vertragsstands liegen." };
   const closed = await prisma.monthlyTimeClosing.findFirst({ where: { employeeId: id, status: "CLOSED", month: { gte: new Date(dbDate(from).getTime() - 31 * 86400000) } } });
@@ -122,7 +138,8 @@ export async function addContract(_: FormState, fd: FormData): Promise<FormState
     const c = await tx.employeeContract.create({
       data: {
         employeeId: id, validFrom: dbDate(from), payModel: last?.payModel ?? "SALARIED", weeklyMinutes: weekly,
-        monthlyTargetMethod: (s(fd, "method") || "WEEKLY_AVERAGE") as MonthlyTargetMethod, workdaysPerWeek: Number(s(fd, "workdaysPerWeek") || "5"),
+        monthlyTargetMethod: (s(fd, "method") || "WEEKLY_AVERAGE") as MonthlyTargetMethod,
+        workdaysMask: wd?.mask ?? last?.workdaysMask ?? 31, workdaysPerWeek: wd?.perWeek ?? Number(s(fd, "workdaysPerWeek") || "5"),
         vacationDaysPerYear: Number(s(fd, "vacationDays") || "0"), note: s(fd, "note") || null, createdById: admin.id,
       },
     });
@@ -130,6 +147,27 @@ export async function addContract(_: FormState, fd: FormData): Promise<FormState
   });
   revalidatePath(`/admin/mitarbeiter/${id}`);
   return { ok: closed ? "Gespeichert. Achtung: Ein betroffener Monat ist bereits abgeschlossen und muss ggf. korrigiert werden." : "Neuer Vertragsstand gespeichert." };
+}
+
+/**
+ * Arbeitstage des aktuellen Vertragsstands berichtigen (z. B. nach der Umstellung, als alle Verträge Mo–Fr hatten).
+ * Wirkt für den ganzen Vertragszeitraum; bereits abgeschlossene Monate behalten ihren gespeicherten Abschluss.
+ */
+export async function setWorkdays(_: FormState, fd: FormData): Promise<FormState> {
+  const admin = await requireAdmin("contracts.manage");
+  const id = s(fd, "id");
+  const wd = parseWorkdays(fd);
+  if (!wd) return { error: "Bitte die Arbeitstage ankreuzen." };
+  if ("error" in wd) return { error: wd.error };
+  const c = await prisma.employeeContract.findFirst({ where: { employeeId: id }, orderBy: { validFrom: "desc" } });
+  if (!c) return { error: "Kein Vertrag vorhanden." };
+  const closed = await prisma.monthlyTimeClosing.findFirst({ where: { employeeId: id, status: "CLOSED", month: { gte: c.validFrom } } });
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.employeeContract.update({ where: { id: c.id }, data: { workdaysMask: wd.mask, workdaysPerWeek: wd.perWeek } });
+    await audit(tx, { actorKind: "ADMIN", actorId: admin.id, action: "CONTRACT_WORKDAYS_CORRECTED", entityType: "EmployeeContract", entityId: c.id, employeeId: id, before: { workdaysMask: c.workdaysMask, workdaysPerWeek: c.workdaysPerWeek }, after: { workdaysMask: after.workdaysMask, workdaysPerWeek: after.workdaysPerWeek } });
+  });
+  revalidatePath(`/admin/mitarbeiter/${id}`);
+  return { ok: closed ? "Gespeichert. Achtung: Es gibt bereits abgeschlossene Monate in diesem Vertragszeitraum – diese bitte unter Monatsabschluss prüfen und ggf. korrigieren." : "Arbeitstage gespeichert." };
 }
 
 export async function addOvertimeRule(_: FormState, fd: FormData): Promise<FormState> {
@@ -165,6 +203,8 @@ export async function addWage(_: FormState, fd: FormData): Promise<FormState> {
     await audit(tx, { actorKind: "ADMIN", actorId: admin.id, action: "WAGE_ADDED", entityType: "HourlyWageHistory", entityId: w.id, employeeId: id, before: last, after: w });
   });
   revalidatePath(`/admin/mitarbeiter/${id}`);
+  const min = minimumWageCents(from);
+  if (cents < min) return { error: `Gespeichert – aber ACHTUNG: ${(cents / 100).toFixed(2).replace(".", ",")} € liegt unter dem gesetzlichen Mindestlohn von ${(min / 100).toFixed(2).replace(".", ",")} € (ab ${from.split("-").reverse().join(".")}). Ausnahmen nur z. B. für Auszubildende oder Jugendliche ohne Berufsabschluss.` };
   return { ok: "Stundenlohn gespeichert." };
 }
 
@@ -184,16 +224,17 @@ export async function resetPin(_: FormState, fd: FormData): Promise<FormState> {
 export async function savePortalVisibility(_: FormState, fd: FormData): Promise<FormState> {
   const admin = await requireAdmin("employees.manage");
   const id = s(fd, "id");
-  const keys = ["schedule", "weeklyTarget", "weeklyHours", "monthlyHours", "monthlyTarget", "accountBalance", "overtime", "minusHours", "includedOvertime", "vacationRemaining", "ownReports"] as const;
+  const keys = ["schedule", "weeklyTarget", "weeklyHours", "monthlyHours", "monthlyTarget", "accountBalance", "minusHours", "vacationRemaining", "vacationRequests"] as const;
   const data = Object.fromEntries(keys.map((k) => [k, fd.get(k) === "on"]));
   const enabled = fd.get("portalEnabled") === "on";
   await prisma.$transaction(async (tx) => {
     await tx.portalVisibility.upsert({ where: { employeeId: id }, update: data, create: { employeeId: id, ...data } });
-    await tx.employeeCredential.update({ where: { employeeId: id }, data: { portalEnabled: enabled } });
+    await tx.employeeCredential.update({ where: { employeeId: id }, data: { portalEnabled: enabled, ...(enabled ? {} : { portalInviteHash: null, portalInviteExpiresAt: null }) } });
+    if (!enabled) await tx.session.deleteMany({ where: { employeeId: id, kind: "PORTAL" } }); // gesperrt = sofort abgemeldet
     await audit(tx, { actorKind: "ADMIN", actorId: admin.id, action: "PORTAL_VISIBILITY", entityType: "Employee", entityId: id, employeeId: id, after: { enabled, ...data } });
   });
   revalidatePath(`/admin/mitarbeiter/${id}`);
-  return { ok: "Freigaben gespeichert." };
+  return { ok: enabled ? "Freigaben gespeichert. Änderungen gelten sofort am Handy." : "Gespeichert. Der Handy-Zugang ist gesperrt, der Mitarbeiter wurde abgemeldet." };
 }
 
 export async function setActive(_: FormState, fd: FormData): Promise<FormState> {

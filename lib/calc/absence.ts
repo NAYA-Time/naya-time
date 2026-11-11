@@ -47,3 +47,19 @@ export function datesBetween(from: string, to: string): string[] {
   for (let t = Date.parse(from + "T00:00:00Z"); t <= Date.parse(to + "T00:00:00Z"); t += 86400000) out.push(new Date(t).toISOString().slice(0, 10));
   return out;
 }
+
+/**
+ * Arbeit und Abwesenheit am selben Tag (z. B. nach 2 Std. krank nach Hause): Die Abwesenheit füllt nur auf,
+ * was am Tag nicht gearbeitet wurde. Gutschrift = max(0, Abwesenheit − gearbeitete Minuten des Tages).
+ * Die gespeicherte Gutschrift bleibt unverändert; die Kürzung wird bei jeder Rechnung neu ermittelt.
+ */
+export function capAbsenceByWork<T extends { date: string; creditedMinutes: number }>(days: T[], workedByDate: Map<string, number>): T[] {
+  const left = new Map(workedByDate);
+  return days.map((d) => {
+    const w = left.get(d.date) ?? 0;
+    if (w <= 0 || d.creditedMinutes <= 0) return d;
+    const used = Math.min(w, d.creditedMinutes);
+    left.set(d.date, w - used);
+    return { ...d, creditedMinutes: d.creditedMinutes - used };
+  });
+}

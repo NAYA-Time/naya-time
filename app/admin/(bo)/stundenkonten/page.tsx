@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/admin-auth";
-import { currentDeptFilter, matchesFilter } from "@/lib/dept";
+import { currentDeptFilter, matchesEmp } from "@/lib/dept";
 import { loadMonth } from "@/lib/month-data";
 import { berlinDate, dbDate, fmtMinutes } from "@/lib/time";
 
@@ -17,7 +17,7 @@ export default async function StundenkontenPage() {
     include: { primaryDept: { include: { parent: true } }, account: { include: { transactions: { select: { minutes: true } } } }, monthlyClosings: { where: { status: "CLOSED" }, orderBy: { month: "desc" }, take: 1 } },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });
-  const rows = await Promise.all(emps.filter((e) => matchesFilter(filter, e.primaryDept)).map(async (e) => ({ e, balance: e.account?.transactions.reduce((a, t) => a + t.minutes, 0) ?? 0, cur: await loadMonth(prisma, e.id, today.slice(0, 7)) })));
+  const rows = await Promise.all(emps.filter((e) => matchesEmp(filter, e)).map(async (e) => ({ e, balance: e.account?.transactions.reduce((a, t) => a + t.minutes, 0) ?? 0, cur: await loadMonth(prisma, e.id, today.slice(0, 7)) })));
   return (
     <div className="grid max-w-5xl gap-5">
       <h1 className="text-3xl font-semibold">Stundenkonten</h1>

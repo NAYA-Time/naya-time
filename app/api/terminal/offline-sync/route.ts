@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     const device = await requireTerminal();
-    const rl = await hit(`offline-sync:${device.id}`, 30, 300);
+    const rl = await hit(`offline-sync:${device.id}`, 12, 300);
     if (!rl.ok) throw new HttpError(429, "Zu viele Anfragen.");
     const { items } = (await req.json()) as { items?: OfflineItem[] };
     if (!Array.isArray(items) || items.length > 50) throw new HttpError(400, "Ungültige Anfrage.");

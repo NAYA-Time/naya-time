@@ -5,11 +5,16 @@ import { cachedEmployees, flushQueue, hasPublicKey, listQueue, queueStamp, remem
 
 // ───────────────────────── Typen ─────────────────────────
 type Action = "CLOCK_IN" | "CLOCK_OUT" | "BREAK_START" | "BREAK_END";
-type Intent = "IN" | "OUT" | "BREAK";
+type Intent = "IN" | "OUT" | "BREAK" | "PLAN";
 type Emp = { id: string; name: string; dept: string; deptName: string; needsSetup: boolean };
 type Greeting = {
   ticket: string; firstName: string; today: string; serverTime: string; state: "OUT" | "IN" | "BREAK";
   since: string | null; shift: { start: string; end: string | null } | null; actions: Action[]; askBreak: boolean;
+  minusMinutes?: number | null;
+  vacation?: { year: number; entitlement: number; taken: number; planned: number; rest: number; carryOpen?: number; carryExpires?: string } | null;
+  notices?: string[];
+  planChanges?: string[];
+  plan?: { title: string; range: string; published: boolean; days: { label: string; today: boolean; shifts: string[]; absence: string | null; change?: string | null }[] }[];
 };
 type Screen =
   | { k: "loading" }
@@ -82,9 +87,75 @@ function Big({ children, onClick, tone = "gold", disabled }: { children: React.R
   };
   return (
     <button disabled={disabled} onClick={onClick}
-      className={`w-full min-h-24 rounded-2xl px-6 text-2xl font-semibold tracking-[0.12em] transition-transform active:scale-[0.985] disabled:opacity-40 ${tones[tone]}`}>
+      className={`w-full min-h-24 rounded-2xl px-4 text-[clamp(1.05rem,2.9vw,1.5rem)] font-semibold tracking-[0.08em] whitespace-nowrap sm:tracking-[0.12em] transition-transform active:scale-[0.985] disabled:opacity-40 ${tones[tone]}`}>
       {children}
     </button>
+  );
+}
+
+/** Kompakte Wochenansicht beim Einstempeln: nur die eigenen Dienste dieser Woche */
+function WeekStrip({ week }: { week: NonNullable<Greeting["plan"]>[number] }) {
+  return (
+    <section aria-label="Deine Dienste diese Woche" className="rounded-3xl border border-line bg-coal p-3">
+      <p className="mb-2 px-1 text-sm tracking-[0.2em] text-mute">DEINE WOCHE {week.range}{!week.published && <span className="tracking-normal text-warn"> · noch nicht veröffentlicht</span>}</p>
+      <ol className="grid grid-cols-7 gap-1.5 text-center">
+        {week.days.map((d) => (
+          <li key={d.label} className={`min-w-0 rounded-xl px-1 py-2 ${d.change ? "bg-info/20 text-info ring-2 ring-info" : d.today ? "bg-gold/20 text-gold ring-1 ring-gold" : "bg-ink"}`}>
+            <span className="block text-sm">{d.label.slice(0, 2)} <span className="text-mute">{d.label.slice(3, 9)}</span></span>
+            {d.shifts.length ? d.shifts.map((t) => (
+              <span key={t} className="block text-lg font-semibold leading-tight tabular">{t.split("–")[0]}<span className="block text-xs font-normal text-mute">bis {t.split("–")[1]}</span></span>
+            )) : <span className={`block text-base leading-tight ${d.change ? "" : "text-mute"}`}>{d.absence ?? "frei"}</span>}
+            {d.change && <span className="block text-[11px] font-semibold leading-tight">{d.change.startsWith("gestrichen") ? `GESTRICHEN war ${d.change.match(/war (\d\d:\d\d)/)?.[1] ?? ""}` : d.change === "neu" ? "NEU" : `GEÄNDERT war ${d.change.match(/vorher (\d\d:\d\d)/)?.[1] ?? ""}`}</span>}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+/** Hinweis auf geänderte Dienste (blau). compact: eine Zeile, Einzelheiten stehen in der Wochenleiste. */
+function PlanChanges({ g, compact = false }: { g: Greeting; compact?: boolean }) {
+  if (!g.planChanges?.length) return null;
+  if (compact) return <p role="alert" className="rounded-2xl border-2 border-info bg-info/15 px-5 py-2 text-lg font-semibold text-info">Dein Dienstplan wurde geändert – siehe blau markierte Tage.</p>;
+  return (
+    <div role="alert" className="rounded-2xl border-2 border-info bg-info/15 px-5 py-2 text-info">
+      <p className="text-lg font-semibold">Dein Dienstplan wurde geändert:</p>
+      <ul className="grid gap-x-6 text-base leading-snug sm:grid-cols-2">{g.planChanges.map((c) => <li key={c} className="tabular">{c}</li>)}</ul>
+    </div>
+  );
+}
+
+function MyPlan({ g }: { g: Greeting }) {
+  return (
+    <div className="mx-auto grid w-full max-w-4xl flex-1 content-start gap-6 overflow-y-auto py-4">
+      <h2 className="font-display text-5xl">Hallo {g.firstName}, deine Dienste</h2>
+      <PlanChanges g={g} />
+      {g.vacation && (
+        <p className="rounded-3xl border border-line bg-coal px-5 py-4 text-2xl">
+          Urlaub {g.vacation.year}: <span className="font-semibold text-gold">noch {g.vacation.rest.toLocaleString("de-DE")} Tage</span>
+          {g.vacation.carryOpen ? <span className="block text-lg text-warn">Davon {g.vacation.carryOpen.toLocaleString("de-DE")} Tage aus dem Vorjahr – bitte bis {g.vacation.carryExpires?.split("-").reverse().join(".")} nehmen.</span> : null}
+          <span className="block text-lg text-mute">Anspruch {g.vacation.entitlement.toLocaleString("de-DE")} · genommen {g.vacation.taken.toLocaleString("de-DE")}{g.vacation.planned ? ` · geplant ${g.vacation.planned.toLocaleString("de-DE")}` : ""}</span>
+        </p>
+      )}
+      {(g.plan ?? []).map((w) => (
+        <section key={w.title} className="rounded-3xl border border-line bg-coal p-5">
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-2xl font-semibold">{w.title} <span className="text-mute tabular">{w.range}</span></h3>
+            {!w.published && <span className="text-lg text-warn">noch nicht veröffentlicht – kann sich ändern</span>}
+          </div>
+          <ul className="grid gap-1">
+            {w.days.map((d) => (
+              <li key={d.label} className={`flex flex-wrap items-center justify-between gap-x-4 rounded-xl px-4 py-2.5 text-2xl ${d.change ? "bg-info/15 text-info ring-2 ring-info" : d.today ? "bg-gold/15 text-gold" : ""}`}>
+                <span className="tabular">{d.label}</span>
+                <span className="tabular">{d.shifts.length ? d.shifts.join(", ") : d.absence ?? <span className={d.change ? "" : "text-mute"}>frei</span>}{d.shifts.length > 0 && d.absence ? ` · ${d.absence}` : ""}</span>
+                {d.change && <span className="w-full text-right text-base font-semibold">Änderung: {d.change}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      <p className="text-lg text-mute">Nur du siehst hier deinen Plan. Bei Fragen zum Dienstplan bitte bei der Leitung melden.</p>
+    </div>
   );
 }
 
@@ -153,7 +224,11 @@ function CameraCapture({ countdown, onResult }: { countdown: number; onResult: (
     (async () => {
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error("Kamera vom Browser nicht unterstützt");
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 960 }, height: { ideal: 720 } }, audio: false });
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false });
+        // weitester Bildausschnitt (Gunnar: Arbeitskleidung muss erkennbar sein) – nur wo die Kamera Zoom unterstützt
+        const track = stream.getVideoTracks()[0];
+        const zoom = (track?.getCapabilities?.() as { zoom?: { min: number } } | undefined)?.zoom;
+        if (zoom) await track.applyConstraints({ advanced: [{ zoom: zoom.min } as MediaTrackConstraintSet] }).catch(() => {});
         const v = video.current!;
         v.srcObject = stream;
         await v.play();
@@ -163,14 +238,14 @@ function CameraCapture({ countdown, onResult }: { countdown: number; onResult: (
           setLeft(n);
           if (n > 0) return;
           clearInterval(timer);
-          const w = Math.min(640, v.videoWidth || 640);
+          const w = Math.min(1600, v.videoWidth || 640);
           const h = Math.round(w * ((v.videoHeight || 480) / (v.videoWidth || 640)));
           const c = document.createElement("canvas");
           c.width = w; c.height = h;
           const ctx = c.getContext("2d")!;
           ctx.translate(w, 0); ctx.scale(-1, 1); // wie im Spiegel, so wie der Mitarbeiter sich gesehen hat
           ctx.drawImage(v, 0, 0, w, h);
-          c.toBlob((b) => finish(b && b.size > 1000 ? b : null, b ? undefined : "Bild konnte nicht erzeugt werden"), "image/jpeg", 0.8);
+          c.toBlob((b) => finish(b && b.size > 1000 ? b : null, b ? undefined : "Bild konnte nicht erzeugt werden"), "image/jpeg", 0.82);
         }, 1000);
       } catch (e) {
         const name = (e as Error).name;
@@ -187,7 +262,7 @@ function CameraCapture({ countdown, onResult }: { countdown: number; onResult: (
         <video ref={video} playsInline muted className="size-full -scale-x-100 object-cover" />
         <span className="absolute inset-0 grid place-items-center font-display text-9xl text-paper/90 tabular drop-shadow-lg">{left > 0 ? left : ""}</span>
       </div>
-      <p className="text-2xl text-mute">Bitte kurz in die Kamera schauen …</p>
+      <p className="text-2xl text-mute">Bitte einen Schritt zurück – Gesicht und Arbeitskleidung sollen zu sehen sein.</p>
     </div>
   );
 }
@@ -197,7 +272,7 @@ export default function Terminal() {
   const now = useServerClock();
   const [screen, setScreen] = useState<Screen>({ k: "loading" });
   const [emps, setEmps] = useState<Emp[]>([]);
-  const [filter, setFilter] = useState<"ALL" | "KUECHE" | "SERVICE">("ALL");
+  const [filter, setFilter] = useState<string>("ALL");
   const idempotency = useRef<string | null>(null);
   const photoRef = useRef<{ blob: Blob | null; reason?: string } | null>(null);
 
@@ -228,6 +303,25 @@ export default function Terminal() {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
     loadEmployees().then((ok) => ok && setScreen({ k: "home" }));
   }, [loadEmployees]);
+
+  // Mitarbeiterliste aktuell halten: neue Mitarbeiter, PIN-Rücksetzung und abgeschlossene Ersteinrichtung
+  // müssen ohne Neustart der App ankommen. Still im Hintergrund – Fehler ändern den Bildschirm nicht.
+  const refreshEmployees = useCallback(async () => {
+    try {
+      const r = await api<{ employees: Emp[] }>("/api/terminal/employees");
+      setEmps(r.employees);
+      rememberEmployees(r.employees);
+    } catch { /* offline oder Serverfehler: letzte bekannte Liste behalten */ }
+  }, []);
+  const screenKind = screen.k;
+  useEffect(() => {
+    if (screenKind === "home" || screenKind === "pick") refreshEmployees();
+    if (screenKind !== "home" && screenKind !== "pick") return;
+    const t = setInterval(refreshEmployees, 60_000);
+    const vis = () => { if (document.visibilityState === "visible") refreshEmployees(); };
+    document.addEventListener("visibilitychange", vis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", vis); };
+  }, [screenKind, refreshEmployees]);
 
   // Offline-Warteschlange regelmäßig nachreichen
   useEffect(() => {
@@ -280,6 +374,7 @@ export default function Terminal() {
       setOnline(true);
       afterAuth(intent, g);
     } catch (e) {
+      if (!(e as { status?: number }).status && intent === "PLAN") { auth.current = null; return setScreen({ k: "error", message: "Keine Verbindung zum Server. Der Dienstplan kann gerade nicht angezeigt werden." }); }
       if (!(e as { status?: number }).status && hasPublicKey()) { idempotency.current = crypto.randomUUID(); return setScreen({ k: "offline", intent, emp, number }); }
       auth.current = null;
       setScreen({ k: "pin", intent, emp, number, error: (e as Error).message });
@@ -363,6 +458,7 @@ export default function Terminal() {
               <Big tone="dark" onClick={() => setScreen({ k: "pick", intent: "OUT" })}>JETZT AUSSTEMPELN</Big>
               <Big tone="dark" onClick={() => setScreen({ k: "pick", intent: "BREAK" })}>PAUSE</Big>
             </div>
+            <button onClick={() => setScreen({ k: "pick", intent: "PLAN" })} className="min-h-16 rounded-2xl border border-line bg-ink/60 text-xl tracking-wide text-paper active:bg-slate">MEIN DIENSTPLAN</button>
           </div>
         </main>
       );
@@ -370,14 +466,14 @@ export default function Terminal() {
     case "pick": {
       const list = emps.filter((e) => filter === "ALL" || e.dept === filter);
       return (
-        <Shell onBack={home} title={screen.intent === "IN" ? "Einstempeln" : screen.intent === "OUT" ? "Ausstempeln" : "Pause"}>
-          <div className="my-4 flex items-center justify-between gap-4">
+        <Shell onBack={home} title={screen.intent === "IN" ? "Einstempeln" : screen.intent === "OUT" ? "Ausstempeln" : screen.intent === "PLAN" ? "Mein Dienstplan" : "Pause"}>
+          <div className="my-4 flex flex-wrap items-center justify-between gap-4">
             <h2 className="text-3xl">Wer bist du?</h2>
-            <div className="flex gap-2">
-              {(["ALL", "KUECHE", "SERVICE"] as const).map((f) => (
+            <div className="flex flex-wrap gap-2">
+              {(["ALL", "KUECHE", "SERVICE", "SPUELE", "BUERO"] as const).filter((f) => f === "ALL" || emps.some((e) => e.dept === f)).map((f) => (
                 <button key={f} onClick={() => setFilter(f)}
-                  className={`min-h-14 rounded-xl px-5 text-lg ${filter === f ? "bg-gold text-ink" : "border border-line text-mute"}`}>
-                  {f === "ALL" ? "Alle" : f === "KUECHE" ? "Küche" : "Service"}
+                  className={`min-h-14 whitespace-nowrap rounded-xl px-4 text-lg ${filter === f ? "bg-gold text-ink" : "border border-line text-mute"}`}>
+                  {{ ALL: "Alle", KUECHE: "Küche", SERVICE: "Service", SPUELE: "Spülküche", BUERO: "Büro" }[f]}
                 </button>
               ))}
             </div>
@@ -441,29 +537,48 @@ export default function Terminal() {
 
     case "confirm": {
       const g = screen.g;
+      if (screen.intent === "PLAN") return <Shell onBack={home} title="Mein Dienstplan"><MyPlan g={g} /></Shell>;
       const wanted: Action[] = screen.intent === "IN" ? ["CLOCK_IN"] : screen.intent === "OUT" ? ["CLOCK_OUT"] : ["BREAK_START", "BREAK_END"];
       const primary = g.actions.filter((a) => wanted.includes(a));
       const others = g.actions.filter((a) => !wanted.includes(a));
+      const compact = screen.intent === "IN"; // beim Einstempeln mehr Infos (Minus, Hinweise, Woche) → kompakter
       const stateText = g.state === "OUT" ? "Du bist nicht eingestempelt." : g.state === "IN" ? `Eingestempelt seit ${g.since} Uhr.` : "Du bist gerade in der Pause.";
       return (
         <Shell onBack={home}>
-          <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center gap-8">
-            <div>
-              <h2 className="font-display text-6xl">Guten Tag, {g.firstName}!</h2>
-              <p className="mt-3 text-2xl text-mute">Heute: {g.today}</p>
+          {/* Infos scrollen bei Bedarf, die Knöpfe bleiben immer unten sichtbar */}
+          <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-4 pb-1">
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className={`flex min-h-full flex-col justify-center py-2 ${compact ? "gap-2" : "gap-8"}`}>
+                <div>
+                  <h2 className={`font-display ${compact ? "text-3xl" : "text-6xl"}`}>Guten Tag, {g.firstName}!</h2>
+                  <p className={`text-mute ${compact ? "mt-1 text-xl" : "mt-3 text-2xl"}`}>Heute: {g.today}</p>
+                </div>
+                <dl className={`grid grid-cols-3 gap-4 rounded-3xl border border-line bg-coal text-center ${compact ? "px-3 py-2" : "p-6"}`}>
+                  <div><dt className="text-xs tracking-[0.2em] text-mute sm:text-sm">GEPLANTER BEGINN</dt><dd className={`tabular ${compact ? "text-3xl leading-tight" : "mt-2 text-4xl"}`}>{g.shift ? `${g.shift.start}` : "–"}</dd></div>
+                  <div><dt className="text-xs tracking-[0.2em] text-mute sm:text-sm">GEPLANTES ENDE</dt><dd className={`tabular ${compact ? "text-3xl leading-tight" : "mt-2 text-4xl"}`}>{g.shift?.end ?? "–"}</dd></div>
+                  <div><dt className="text-xs tracking-[0.2em] text-gold sm:text-sm">AKTUELLE UHRZEIT</dt><dd className={`tabular text-gold ${compact ? "text-3xl leading-tight" : "mt-2 text-4xl"}`}>{now ? fmtTime(now) : ""}</dd></div>
+                </dl>
+                {screen.intent === "IN" && g.minusMinutes ? (
+                  <p role="alert" className="rounded-2xl border-2 border-bad bg-bad/15 px-5 py-2 text-xl font-semibold text-bad">
+                    Stundenkonto im Minus: −{Math.floor(g.minusMinutes / 60)}:{String(g.minusMinutes % 60).padStart(2, "0")} Std. (bis gestern)
+                  </p>
+                ) : null}
+                {screen.intent === "IN" && (g.notices ?? []).map((n) => (
+                  <p key={n} role="alert" className="rounded-2xl border-2 border-warn bg-warn/15 px-5 py-2 text-base font-semibold text-warn">⚠ {n}</p>
+                ))}
+                {screen.intent === "IN" && <PlanChanges g={g} compact={!!g.plan?.[0]} />}
+                {screen.intent === "IN" && g.plan?.[0] && <WeekStrip week={g.plan[0]} />}
+                <p className={`text-mute ${compact ? "text-lg" : "text-xl"}`}>
+                  {!g.shift && <span className="text-warn">Für heute ist kein Dienst geplant – du kannst trotzdem stempeln. </span>}
+                  {stateText}
+                </p>
+              </div>
             </div>
-            <dl className="grid grid-cols-3 gap-4 rounded-3xl border border-line bg-coal p-6 text-center">
-              <div><dt className="text-sm tracking-[0.2em] text-mute">GEPLANTER BEGINN</dt><dd className="mt-2 text-4xl tabular">{g.shift ? `${g.shift.start}` : "–"}</dd></div>
-              <div><dt className="text-sm tracking-[0.2em] text-mute">GEPLANTES ENDE</dt><dd className="mt-2 text-4xl tabular">{g.shift?.end ?? "–"}</dd></div>
-              <div><dt className="text-sm tracking-[0.2em] text-gold">AKTUELLE UHRZEIT</dt><dd className="mt-2 text-4xl tabular text-gold">{now ? fmtTime(now) : ""}</dd></div>
-            </dl>
-            {!g.shift && <p className="text-xl text-warn">Für heute ist kein Dienst geplant. Du kannst trotzdem stempeln.</p>}
-            <p className="text-xl text-mute">{stateText}</p>
-            <div className="grid gap-4">
+            <div className="grid shrink-0 gap-4">
               {primary.map((a) => <Big key={a} onClick={() => choose(g, a)}>{LABEL[a]}</Big>)}
               {!primary.length && <p className="text-xl text-warn">{screen.intent === "IN" ? "Du bist bereits eingestempelt." : "Dafür musst du zuerst einstempeln."}</p>}
               {others.length > 0 && (
-                <div className="grid grid-cols-2 gap-4">
+                <div className={`grid gap-4 ${others.length > 1 ? "grid-cols-2" : ""}`}>
                   {others.map((a) => <Big key={a} tone="dark" onClick={() => choose(g, a)}>{LABEL[a]}</Big>)}
                 </div>
               )}

@@ -8,7 +8,7 @@ import { berlinDate, berlinTime, berlinToInstant, dbDate } from "./time";
 import { findShift } from "./stamp";
 
 type Tx = Prisma.TransactionClient;
-type Field = "CLOCK_IN" | "CLOCK_OUT" | "BREAK_MINUTES" | "SESSION_VOID" | "ADD_SESSION";
+type Field = "CLOCK_IN" | "CLOCK_OUT" | "BREAK_MINUTES" | "SESSION_VOID" | "ADD_SESSION" | "PAYABLE_START";
 
 export async function recomputeSession(tx: Tx, id: string) {
   const s = await tx.workSession.findUniqueOrThrow({ where: { id }, include: { clockInEvent: true, clockOutEvent: true, breaks: true, corrections: { orderBy: { createdAt: "asc" } } } });
@@ -21,28 +21,36 @@ export async function recomputeSession(tx: Tx, id: string) {
   const clockIn = latest.has("CLOCK_IN") ? new Date(latest.get("CLOCK_IN")!) : s.clockInEvent?.effectiveAt;
   if (!clockIn) throw new Error("Schicht ohne Beginn");
   const clockOut = latest.has("CLOCK_OUT") ? new Date(latest.get("CLOCK_OUT")!) : s.clockOutEvent?.effectiveAt ?? null;
-  if (!clockOut) return s; // weiterhin offen
+  if (!clockOut) { // weiterhin offen – Genehmigung „früher Beginn“ trotzdem merken, sie gilt dann beim Ausstempeln
+    if (latest.has("PAYABLE_START") && (latest.get("PAYABLE_START") === "true") !== s.earlyStartApproved) return tx.workSession.update({ where: { id }, data: { earlyStartApproved: latest.get("PAYABLE_START") === "true" } });
+    return s;
+  }
   const breaks = latest.has("BREAK_MINUTES") ? [{ minutes: Number(latest.get("BREAK_MINUTES")) }] : s.breaks.map((b) => ({ minutes: b.minutes }));
-  const r = computeSession({ clockIn, clockOut, plannedStart: s.plannedStartAt, plannedEnd: s.plannedEndAt, breaks, earlyStartApproved: s.earlyStartApproved });
+  // PAYABLE_START = "true": Arbeit vor dem geplanten Dienstbeginn ist genehmigt und wird ab der Stempelzeit vergütet
+  const early = latest.has("PAYABLE_START") ? latest.get("PAYABLE_START") === "true" : s.earlyStartApproved;
+  const r = computeSession({ clockIn, clockOut, plannedStart: s.plannedStartAt, plannedEnd: s.plannedEndAt, breaks, earlyStartApproved: early });
   return tx.workSession.update({
     where: { id },
     data: {
+      earlyStartApproved: early,
       status: "CLOSED", effectiveStartAt: r.effectiveStart, effectiveEndAt: r.effectiveEnd, presenceMinutes: r.presenceMinutes, breakMinutes: r.breakMinutes,
       workedMinutes: r.workedMinutes, payableMinutes: r.payableMinutes, lateMinutes: r.lateMinutes, earlyArrivalMinutes: r.earlyArrivalMinutes, overrunMinutes: r.overrunMinutes, computedAt: now,
     },
   });
 }
 
-export interface CorrectionInput { clockIn?: string; clockOut?: string; breakMinutes?: number | null; voidSession?: boolean; reason: string }
+export interface CorrectionInput { clockIn?: string; clockOut?: string; breakMinutes?: number | null; voidSession?: boolean; /** früher Beginn genehmigt (undefined = unverändert) */ earlyStart?: boolean; reason: string }
 
 /** clockIn/clockOut als "HH:MM" bezogen auf den Arbeitstag; Ende vor Beginn = nächster Tag */
 export async function correctSession(adminId: string, sessionId: string, input: CorrectionInput): Promise<{ ok?: string; error?: string; warning?: string }> {
   const reason = input.reason.trim();
   if (reason.length < 5) return { error: "Bitte einen Grund für die Korrektur angeben (mind. 5 Zeichen)." };
   return prisma.$transaction(async (tx) => {
+    // Erst sperren, dann lesen – sonst könnte eine gleichzeitige Korrektur mit veralteten Werten arbeiten
+    const owner = await tx.workSession.findUniqueOrThrow({ where: { id: sessionId }, select: { employeeId: true } });
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${owner.employeeId}))`;
     const s = await tx.workSession.findUniqueOrThrow({ where: { id: sessionId }, include: { clockInEvent: true, clockOutEvent: true, breaks: true, corrections: { orderBy: { createdAt: "asc" } } } });
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${s.employeeId}))`;
-    if (s.status === "OPEN" && !input.voidSession && !input.clockOut) return { error: "Die Schicht läuft noch. Bitte ein Ende angeben oder den Mitarbeiter ausstempeln lassen." };
+    if (s.status === "OPEN" && !input.voidSession && !input.clockOut && input.earlyStart === undefined) return { error: "Die Schicht läuft noch. Bitte ein Ende angeben oder den Mitarbeiter ausstempeln lassen." };
     const day = berlinDate(s.workDate);
     const cur = new Map<string, { id: string; value: string }>();
     for (const c of s.corrections) cur.set(c.field, { id: c.id, value: c.correctedValue });
@@ -69,6 +77,10 @@ export async function correctSession(adminId: string, sessionId: string, input: 
       if (input.breakMinutes != null && input.breakMinutes !== currentBreak) {
         if (!Number.isInteger(input.breakMinutes) || input.breakMinutes < 0 || input.breakMinutes > 240) return { error: "Pause bitte in Minuten (0–240)." };
         changes.push({ field: "BREAK_MINUTES", original: String(currentBreak), value: String(input.breakMinutes) });
+      }
+      if (input.earlyStart !== undefined && input.earlyStart !== s.earlyStartApproved) {
+        if (!s.plannedStartAt) return { error: "Zu dieser Schicht gibt es keinen geplanten Dienst – die Zeit zählt ohnehin ab dem Einstempeln." };
+        changes.push({ field: "PAYABLE_START", original: String(s.earlyStartApproved), value: String(input.earlyStart) });
       }
     }
     if (!changes.length) return { error: "Keine Änderung erkannt." };
